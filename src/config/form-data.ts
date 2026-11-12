@@ -135,23 +135,45 @@ export interface SectionGroup {
 let loadedCountries: CountryData[] = [];
 const countriesByCode = new Map<string, CountryData>();
 
+const VISIT_VISA_DATA_FILENAME = "visa_100_countries_visit_visa_official_fields.json";
+
 function resolveFormDataPath(): string {
   if (path.isAbsolute(env.FORM_DATA_PATH)) {
-    return env.FORM_DATA_PATH;
-  }
+    if (fs.existsSync(env.FORM_DATA_PATH)) {
+      return env.FORM_DATA_PATH;
+    }
+  } else {
+    const candidates = [
+      path.resolve(process.cwd(), env.FORM_DATA_PATH),
+      path.resolve(__dirname, "..", "..", env.FORM_DATA_PATH),
+    ];
 
-  const candidates = [
-    path.resolve(process.cwd(), env.FORM_DATA_PATH),
-    path.resolve(__dirname, "..", "..", env.FORM_DATA_PATH),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
     }
   }
 
-  return candidates[0]!;
+  // Fallback for environments whose FORM_DATA_PATH still references the legacy pre-visit-visa filename
+  if (path.basename(env.FORM_DATA_PATH) === "visa_100_countries_official_fields.json") {
+    const fallbackCandidates = [
+      path.resolve(process.cwd(), VISIT_VISA_DATA_FILENAME),
+      path.resolve(__dirname, "..", "..", VISIT_VISA_DATA_FILENAME),
+    ];
+    for (const fallback of fallbackCandidates) {
+      if (fs.existsSync(fallback)) {
+        console.warn(
+          `WARN: FORM_DATA_PATH="${env.FORM_DATA_PATH}" not found; using "${fallback}" instead. Update FORM_DATA_PATH to "./${VISIT_VISA_DATA_FILENAME}".`,
+        );
+        return fallback;
+      }
+    }
+  }
+
+  return path.isAbsolute(env.FORM_DATA_PATH)
+    ? env.FORM_DATA_PATH
+    : path.resolve(process.cwd(), env.FORM_DATA_PATH);
 }
 
 export function initFormData(): void {
