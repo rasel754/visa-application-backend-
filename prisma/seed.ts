@@ -1,7 +1,7 @@
 import "dotenv/config";
-import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import { ensureInitialAdmin } from "../src/lib/admin-seed";
 
 const seedEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
@@ -24,27 +24,17 @@ async function main(): Promise<void> {
   const prisma = new PrismaClient();
 
   try {
-    const existingCount = await prisma.adminUser.count();
-    if (existingCount > 0) {
-      console.log("Admin user already exists. Skipping admin seed.");
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
-    const admin = await prisma.adminUser.create({
-      data: {
-        email: ADMIN_EMAIL.toLowerCase().trim(),
-        passwordHash,
-        name: ADMIN_NAME.trim(),
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-      },
+    const result = await ensureInitialAdmin(prisma, {
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+      name: ADMIN_NAME,
     });
 
-    console.log(`Seeded admin account: ${admin.email} (${admin.name})`);
+    if (result.seeded) {
+      console.log(`Seeded admin account: ${result.email} (${result.name})`);
+    } else {
+      console.log(`Updated admin account: ${result.email} (${result.name})`);
+    }
   } finally {
     await prisma.$disconnect();
   }

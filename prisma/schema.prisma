@@ -15,6 +15,20 @@ enum SubmissionStatus {
   REJECTED
 }
 
+enum Profession {
+  STUDENT
+  BUSINESSMAN
+  EMPLOYEE
+}
+
+enum OtpStatus {
+  SENT
+  VERIFIED
+  EXPIRED
+  FAILED
+  USED
+}
+
 model AdminUser {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -28,7 +42,7 @@ model IntakeLink {
   id          String       @id @default(cuid())
   token       String       @unique @db.VarChar(64)
   countryCode String?      @db.VarChar(16)
-  category    String?      @db.VarChar(64)
+  profession  Profession?
   expiresAt   DateTime?
   usedAt      DateTime?
   createdAt   DateTime     @default(now())
@@ -42,13 +56,18 @@ model Submission {
   reference         String               @unique @db.VarChar(32)
   countryCode       String               @db.VarChar(16)
   countryName       String               @db.VarChar(128)
-  category          String               @db.VarChar(64)
+  visaType          String               @default("visit") @db.VarChar(32)
+  profession        Profession?
   officialVisaName  String               @db.VarChar(512)
   applicantName     String               @db.VarChar(255)
   applicantPhone    String               @db.VarChar(64)
   applicantEmail    String?              @db.VarChar(255)
   answers           Json
   status            SubmissionStatus     @default(NEW)
+  otpVerified       Boolean              @default(false)
+  otpVerifiedPhone  String?              @db.VarChar(32)
+  otpVerificationId String?              @unique
+  otpVerification   OtpVerification?     @relation(fields: [otpVerificationId], references: [id], onDelete: SetNull)
   downloadTokenHash String               @unique @db.VarChar(128)
   intakeLinkId      String?
   intakeLink        IntakeLink?          @relation(fields: [intakeLinkId], references: [id], onDelete: SetNull)
@@ -58,7 +77,7 @@ model Submission {
 
   @@index([status])
   @@index([countryCode])
-  @@index([category])
+  @@index([profession])
   @@index([createdAt])
   @@index([applicantName])
   @@index([applicantPhone])
@@ -69,6 +88,7 @@ model SubmissionDocument {
   submissionId String
   submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   documentKey  String     @db.VarChar(128)
+  group        String     @default("common") @db.VarChar(32)
   label        String     @db.VarChar(512)
   originalName String     @db.VarChar(255)
   storedName   String     @db.VarChar(255)
@@ -78,5 +98,33 @@ model SubmissionDocument {
 
   @@index([submissionId])
   @@index([documentKey])
+  @@index([group])
+}
+
+model OtpVerification {
+  id         String      @id @default(cuid())
+  phone      String      @db.VarChar(32)
+  codeHash   String      @db.VarChar(128)
+  status     OtpStatus   @default(SENT)
+  gatewayRef String?     @db.VarChar(128)
+  expiresAt  DateTime
+  attempts   Int         @default(0)
+  verifiedAt DateTime?
+  usedAt     DateTime?
+  createdAt  DateTime    @default(now())
+  submission Submission?
+
+  @@index([phone, createdAt])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model BlockedPhone {
+  id        String   @id @default(cuid())
+  phone     String   @unique @db.VarChar(32)
+  reason    String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 

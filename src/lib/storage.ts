@@ -122,6 +122,7 @@ export function validateUploadedFile(
 export interface TempFileToMove {
   tempPath: string;
   documentKey: string;
+  group: string;
   label: string;
   originalName: string;
   mimeType: string;
@@ -131,6 +132,7 @@ export interface TempFileToMove {
 
 export interface StoredFileMeta {
   documentKey: string;
+  group: string;
   label: string;
   originalName: string;
   storedName: string;
@@ -164,6 +166,7 @@ export function moveFilesToSubmissionFolder(
 
       moved.push({
         documentKey: file.documentKey,
+        group: file.group,
         label: file.label,
         originalName: path.basename(file.originalName).slice(0, 240),
         storedName,

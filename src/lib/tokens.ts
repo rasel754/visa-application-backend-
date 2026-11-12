@@ -8,6 +8,11 @@ export interface AdminJwtPayload {
   name: string;
 }
 
+export interface OtpJwtPayload {
+  otpId: string;
+  phone: string;
+}
+
 export function generateSecureToken(bytes = 24): string {
   return crypto.randomBytes(bytes).toString("base64url");
 }
@@ -45,3 +50,42 @@ export function verifyAdminToken(token: string): AdminJwtPayload {
   };
 }
 
+export function signOtpToken(payload: OtpJwtPayload): string {
+  return jwt.sign(
+    {
+      sub: payload.otpId,
+      phone: payload.phone,
+      purpose: "otp_submission",
+    },
+    env.JWT_SECRET,
+    {
+      expiresIn: "10m",
+      issuer: "igl-visa-help",
+    },
+  );
+}
+
+export function verifyOtpToken(token: string): OtpJwtPayload | null {
+  try {
+    const decoded = jwt.verify(token, env.JWT_SECRET, {
+      issuer: "igl-visa-help",
+    });
+
+    if (
+      typeof decoded !== "object" ||
+      decoded === null ||
+      typeof decoded.sub !== "string" ||
+      typeof (decoded as Record<string, unknown>).phone !== "string" ||
+      (decoded as Record<string, unknown>).purpose !== "otp_submission"
+    ) {
+      return null;
+    }
+
+    return {
+      otpId: decoded.sub,
+      phone: (decoded as Record<string, unknown>).phone as string,
+    };
+  } catch {
+    return null;
+  }
+}

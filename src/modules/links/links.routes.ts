@@ -1,7 +1,12 @@
 import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
-import { getCategory, getCountry, resolveCategoryKey } from "../../config/form-data";
+import {
+  fromPrismaProfession,
+  getCountry,
+  resolveProfessionKey,
+  toPrismaProfession,
+} from "../../config/form-data";
 import { AppError, ERROR_MESSAGES } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { generateSecureToken } from "../../lib/tokens";
@@ -10,7 +15,7 @@ import { validateBody } from "../../middleware/validate";
 
 const createLinkSchema = z.object({
   countryCode: z.string().trim().min(1).nullable().optional(),
-  category: z.string().trim().min(1).nullable().optional(),
+  profession: z.string().trim().min(1).nullable().optional(),
   expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
 });
 
@@ -44,7 +49,7 @@ publicLinksRouter.get(
       res.json({
         valid: true,
         country_code: link.countryCode,
-        category: link.category,
+        profession: fromPrismaProfession(link.profession),
       });
     } catch (err) {
       next(err);
@@ -75,7 +80,7 @@ adminLinksRouter.get(
           token: link.token,
           countryCode: link.countryCode,
           countryName: country?.country ?? null,
-          category: link.category,
+          profession: link.profession,
           expiresAt: link.expiresAt,
           usedAt: link.usedAt,
           createdAt: link.createdAt,
@@ -97,10 +102,10 @@ adminLinksRouter.post(
     try {
       const body = req.body as z.infer<typeof createLinkSchema>;
       const rawCountryCode = body.countryCode?.trim() || null;
-      const rawCategory = body.category?.trim() || null;
+      const rawProfession = body.profession?.trim() || null;
 
       let normalizedCountryCode: string | null = null;
-      let normalizedCategory: string | null = null;
+      let normalizedProfession = null;
 
       if (rawCountryCode) {
         const country = getCountry(rawCountryCode);
@@ -115,25 +120,17 @@ adminLinksRouter.post(
         normalizedCountryCode = country.country_code;
       }
 
-      if (rawCategory) {
-        if (!normalizedCountryCode) {
+      if (rawProfession) {
+        const resolved = resolveProfessionKey(rawProfession);
+        if (!resolved) {
           next(
             new AppError(400, ERROR_MESSAGES.genericValidation, {
-              countryCode: "Please choose a country when setting a visa type.",
+              profession: "Please choose Student, Businessman, or Employee.",
             }),
           );
           return;
         }
-        const resolvedCat = resolveCategoryKey(normalizedCountryCode, rawCategory);
-        if (!resolvedCat || !getCategory(normalizedCountryCode, resolvedCat)) {
-          next(
-            new AppError(400, ERROR_MESSAGES.genericValidation, {
-              category: "Please choose a valid visa type for this country.",
-            }),
-          );
-          return;
-        }
-        normalizedCategory = resolvedCat;
+        normalizedProfession = toPrismaProfession(resolved);
       }
 
       const expiresAt =
@@ -146,7 +143,7 @@ adminLinksRouter.post(
         data: {
           token,
           countryCode: normalizedCountryCode,
-          category: normalizedCategory,
+          profession: normalizedProfession,
           expiresAt,
         },
       });
@@ -158,7 +155,7 @@ adminLinksRouter.post(
         token: created.token,
         countryCode: created.countryCode,
         countryName: country?.country ?? null,
-        category: created.category,
+        profession: created.profession,
         expiresAt: created.expiresAt,
         usedAt: created.usedAt,
         createdAt: created.createdAt,
@@ -187,4 +184,3 @@ adminLinksRouter.delete(
     }
   },
 );
-

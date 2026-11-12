@@ -3,7 +3,7 @@ import type { CookieOptions, Request, Response, NextFunction } from "express";
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { env } from "../../config/env";
+import { env, parseFrontendOrigins } from "../../config/env";
 import { AppError, ERROR_MESSAGES } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { signAdminToken } from "../../lib/tokens";
@@ -36,11 +36,23 @@ const loginLimiter = rateLimit({
   },
 });
 
-function getCookieOptions(): CookieOptions {
+function isHttpsContext(req: Request): boolean {
+  const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  return (
+    req.secure ||
+    forwardedProto === "https" ||
+    parseFrontendOrigins(env.FRONTEND_URL).some((origin) =>
+      origin.toLowerCase().startsWith("https://"),
+    )
+  );
+}
+
+function getCookieOptions(req: Request): CookieOptions {
+  const isHttps = isHttpsContext(req);
   return {
     httpOnly: true,
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production",
+    sameSite: isHttps ? "none" : "lax",
+    secure: isHttps,
     path: "/",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   };
@@ -78,7 +90,7 @@ authRouter.post(
         name: admin.name,
       });
 
-      res.cookie(ADMIN_COOKIE_NAME, token, getCookieOptions());
+      res.cookie(ADMIN_COOKIE_NAME, token, getCookieOptions(req));
       res.json({
         admin: {
           id: admin.id,
@@ -92,13 +104,9 @@ authRouter.post(
   },
 );
 
-authRouter.post("/logout", (_req: Request, res: Response) => {
-  res.clearCookie(ADMIN_COOKIE_NAME, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production",
-    path: "/",
-  });
+authRouter.post("/logout", (req: Request, res: Response) => {
+  const { maxAge: _maxAge, ...clearOptions } = getCookieOptions(req);
+  res.clearCookie(ADMIN_COOKIE_NAME, clearOptions);
   res.json({ ok: true });
 });
 

@@ -1,5 +1,10 @@
-import { Prisma } from "@prisma/client";
-import { getCategory } from "../../config/form-data";
+import { OtpStatus, Prisma } from "@prisma/client";
+import {
+  formatProfessionLabel,
+  fromPrismaProfession,
+  resolveVisitFormForProfession,
+  toPrismaProfession,
+} from "../../config/form-data";
 import { AppError, ERROR_MESSAGES } from "../../lib/errors";
 import { buildSubmissionPdfBuffer } from "../../lib/pdf";
 import { prisma } from "../../lib/prisma";
@@ -33,7 +38,22 @@ function isRetryableTxError(err: unknown): boolean {
 export async function createSubmission(
   input: ValidatedSubmissionInput,
 ): Promise<{ reference: string; downloadToken: string }> {
+  const otpRecord = await prisma.otpVerification.findUnique({
+    where: { id: input.otpId },
+  });
+
+  if (
+    !otpRecord ||
+    otpRecord.phone !== input.otpPhone ||
+    otpRecord.verifiedAt === null ||
+    otpRecord.usedAt !== null ||
+    otpRecord.status !== OtpStatus.VERIFIED
+  ) {
+    throw new AppError(401, ERROR_MESSAGES.otpRequired);
+  }
+
   let intakeLinkId: string | null = null;
+  const prismaProfession = toPrismaProfession(input.profession);
 
   if (input.intakeToken) {
     const link = await prisma.intakeLink.findUnique({
@@ -55,10 +75,7 @@ export async function createSubmission(
       throw new AppError(404, ERROR_MESSAGES.formNotFound);
     }
 
-    if (
-      link.category &&
-      link.category.toLowerCase() !== input.canonicalCategory.toLowerCase()
-    ) {
+    if (link.profession && link.profession !== prismaProfession) {
       throw new AppError(404, ERROR_MESSAGES.formNotFound);
     }
 
@@ -76,6 +93,23 @@ export async function createSubmission(
     try {
       const result = await prisma.$transaction(
         async (tx) => {
+          const otpMarked = await tx.otpVerification.updateMany({
+            where: {
+              id: input.otpId,
+              phone: input.otpPhone,
+              verifiedAt: { not: null },
+              usedAt: null,
+              status: OtpStatus.VERIFIED,
+            },
+            data: {
+              status: OtpStatus.USED,
+              usedAt: new Date(),
+            },
+          });
+          if (otpMarked.count === 0) {
+            throw new AppError(400, ERROR_MESSAGES.otpAlreadyUsed);
+          }
+
           if (intakeLinkId) {
             const updated = await tx.intakeLink.updateMany({
               where: { id: intakeLinkId, usedAt: null },
@@ -104,18 +138,23 @@ export async function createSubmission(
               reference,
               countryCode: input.form.country_code,
               countryName: input.form.country,
-              category: input.canonicalCategory,
+              visaType: "visit",
+              profession: prismaProfession,
               officialVisaName: input.form.official_visa_name,
               applicantName: input.applicantName,
               applicantPhone: input.applicantPhone,
               applicantEmail: input.applicantEmail,
               answers: input.sanitizedAnswers as Prisma.InputJsonValue,
               status: "NEW",
+              otpVerified: true,
+              otpVerifiedPhone: input.otpPhone,
+              otpVerificationId: input.otpId,
               downloadTokenHash,
               intakeLinkId,
               documents: {
                 create: movedDocs.map((doc) => ({
                   documentKey: doc.documentKey,
+                  group: doc.group,
                   label: doc.label,
                   originalName: doc.originalName,
                   storedName: doc.storedName,
@@ -161,7 +200,8 @@ export async function generateSubmissionPdfByDownloadToken(
     throw new AppError(404, ERROR_MESSAGES.formNotFound);
   }
 
-  const form = getCategory(submission.countryCode, submission.category);
+  const professionKey = fromPrismaProfession(submission.profession);
+  const form = resolveVisitFormForProfession(submission.countryCode, professionKey);
   const answersObj =
     typeof submission.answers === "object" &&
     submission.answers !== null &&
@@ -173,7 +213,8 @@ export async function generateSubmissionPdfByDownloadToken(
     {
       reference: submission.reference,
       countryName: submission.countryName,
-      category: submission.category,
+      visaType: submission.visaType,
+      professionLabel: formatProfessionLabel(submission.profession),
       officialVisaName: submission.officialVisaName,
       createdAt: submission.createdAt,
       answers: answersObj,
@@ -182,8 +223,10 @@ export async function generateSubmissionPdfByDownloadToken(
         label: d.label,
         originalName: d.originalName,
       })),
-      fields: form?.fields ?? [],
-      requiredDocuments: form?.documents ?? [],
+      commonFields: form?.commonFields ?? [],
+      profileFields: form?.profileFields ?? [],
+      commonDocuments: form?.commonDocuments ?? [],
+      additionalDocuments: form?.additionalDocuments ?? [],
     },
     { includeEmptyOptional: false },
   );
@@ -207,7 +250,8 @@ export async function generateAdminSubmissionPdf(
     throw new AppError(404, ERROR_MESSAGES.formNotFound);
   }
 
-  const form = getCategory(submission.countryCode, submission.category);
+  const professionKey = fromPrismaProfession(submission.profession);
+  const form = resolveVisitFormForProfession(submission.countryCode, professionKey);
   const answersObj =
     typeof submission.answers === "object" &&
     submission.answers !== null &&
@@ -219,7 +263,8 @@ export async function generateAdminSubmissionPdf(
     {
       reference: submission.reference,
       countryName: submission.countryName,
-      category: submission.category,
+      visaType: submission.visaType,
+      professionLabel: formatProfessionLabel(submission.profession),
       officialVisaName: submission.officialVisaName,
       createdAt: submission.createdAt,
       answers: answersObj,
@@ -228,8 +273,10 @@ export async function generateAdminSubmissionPdf(
         label: d.label,
         originalName: d.originalName,
       })),
-      fields: form?.fields ?? [],
-      requiredDocuments: form?.documents ?? [],
+      commonFields: form?.commonFields ?? [],
+      profileFields: form?.profileFields ?? [],
+      commonDocuments: form?.commonDocuments ?? [],
+      additionalDocuments: form?.additionalDocuments ?? [],
     },
     { includeEmptyOptional: true },
   );
@@ -244,4 +291,3 @@ export async function generateAdminSubmissionPdf(
     })),
   };
 }
-

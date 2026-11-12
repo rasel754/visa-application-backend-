@@ -4,7 +4,15 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { Prisma, SubmissionStatus } from "@prisma/client";
 import { z } from "zod";
-import { getCategory, groupFieldsBySection } from "../../config/form-data";
+import {
+  formatProfessionLabel,
+  fromPrismaProfession,
+  groupFieldsBySection,
+  resolveProfessionKey,
+  resolveVisitFormForProfession,
+  toPrismaProfession,
+} from "../../config/form-data";
+import { getDhakaTodayStartUtc, parseDateBoundary } from "../../lib/dates";
 import { AppError, ERROR_MESSAGES } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import {
@@ -41,30 +49,6 @@ const updateStatusSchema = z.object({
   status: z.enum(["NEW", "CHECKED", "PROCESSING", "COMPLETED", "REJECTED"]),
 });
 
-function getDhakaTodayStartUtc(): Date {
-  // Start of current day in Asia/Dhaka (+06:00)
-  const now = new Date();
-  const dhakaOffsetMs = 6 * 60 * 60 * 1000;
-  const dhakaNow = new Date(now.getTime() + dhakaOffsetMs);
-  const startOfDhakaDayMs = Date.UTC(
-    dhakaNow.getUTCFullYear(),
-    dhakaNow.getUTCMonth(),
-    dhakaNow.getUTCDate(),
-    0,
-    0,
-    0,
-    0,
-  );
-  return new Date(startOfDhakaDayMs - dhakaOffsetMs);
-}
-
-function parseDateBoundary(value: string, endOfDay: boolean): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const iso = endOfDay ? `${value}T23:59:59.999+06:00` : `${value}T00:00:00.000+06:00`;
-  const dt = new Date(iso);
-  return Number.isNaN(dt.getTime()) ? null : dt;
-}
-
 export const publicSubmissionsRouter = Router();
 export const adminSubmissionsRouter = Router();
 
@@ -76,7 +60,8 @@ publicSubmissionsRouter.post(
     const uploadedFiles = Array.isArray(req.files) ? req.files : [];
     try {
       const rawData: unknown = (req.body as Record<string, unknown>)?.data;
-      const validated = validateSubmissionRequest(rawData, uploadedFiles);
+      const headerOtpToken = req.get("x-otp-token") ?? undefined;
+      const validated = validateSubmissionRequest(rawData, uploadedFiles, headerOtpToken);
       const created = await createSubmission(validated);
       res.status(201).json(created);
     } catch (err) {
@@ -154,7 +139,8 @@ adminSubmissionsRouter.get(
     try {
       const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
       const country = typeof req.query.country === "string" ? req.query.country.trim() : "";
-      const category = typeof req.query.category === "string" ? req.query.category.trim() : "";
+      const rawProfession =
+        typeof req.query.profession === "string" ? req.query.profession.trim() : "";
       const status = typeof req.query.status === "string" ? req.query.status.trim() : "";
       const from = typeof req.query.from === "string" ? req.query.from.trim() : "";
       const to = typeof req.query.to === "string" ? req.query.to.trim() : "";
@@ -182,8 +168,9 @@ adminSubmissionsRouter.get(
         where.countryCode = country.toUpperCase();
       }
 
-      if (category) {
-        where.category = category.toLowerCase();
+      const resolvedProfession = resolveProfessionKey(rawProfession);
+      if (resolvedProfession) {
+        where.profession = toPrismaProfession(resolvedProfession);
       }
 
       if (
@@ -216,12 +203,15 @@ adminSubmissionsRouter.get(
             reference: true,
             countryCode: true,
             countryName: true,
-            category: true,
+            visaType: true,
+            profession: true,
             officialVisaName: true,
             applicantName: true,
             applicantPhone: true,
             applicantEmail: true,
             status: true,
+            otpVerified: true,
+            otpVerifiedPhone: true,
             createdAt: true,
             updatedAt: true,
             _count: {
@@ -263,34 +253,45 @@ adminSubmissionsRouter.get(
         return;
       }
 
-      const form = getCategory(submission.countryCode, submission.category);
-      const sections = form ? groupFieldsBySection(form.fields) : [];
+      const professionKey = fromPrismaProfession(submission.profession);
+      const form = resolveVisitFormForProfession(submission.countryCode, professionKey);
+      const commonSections = form ? groupFieldsBySection(form.commonFields) : [];
+      const professionSections = form ? groupFieldsBySection(form.profileFields) : [];
 
       res.json({
         id: submission.id,
         reference: submission.reference,
         countryCode: submission.countryCode,
         countryName: submission.countryName,
-        category: submission.category,
+        visaType: submission.visaType,
+        profession: submission.profession,
+        professionLabel: formatProfessionLabel(submission.profession),
         officialVisaName: submission.officialVisaName,
         applicantName: submission.applicantName,
         applicantPhone: submission.applicantPhone,
         applicantEmail: submission.applicantEmail,
         answers: submission.answers,
         status: submission.status,
+        otpVerified: submission.otpVerified,
+        otpVerifiedPhone: submission.otpVerifiedPhone,
         createdAt: submission.createdAt,
         updatedAt: submission.updatedAt,
         documents: submission.documents.map((doc) => ({
           id: doc.id,
           documentKey: doc.documentKey,
+          group: doc.group,
           label: doc.label,
           originalName: doc.originalName,
           mimeType: doc.mimeType,
           sizeBytes: doc.sizeBytes,
           createdAt: doc.createdAt,
         })),
-        sections,
-        requiredDocuments: form?.documents ?? [],
+        commonSections,
+        professionSections,
+        sections: [...commonSections, ...professionSections],
+        commonDocuments: form?.commonDocuments ?? [],
+        additionalDocuments: form?.additionalDocuments ?? [],
+        requiredDocuments: form?.allDocuments ?? [],
       });
     } catch (err) {
       next(err);
@@ -424,4 +425,3 @@ adminSubmissionsRouter.get(
     }
   },
 );
-

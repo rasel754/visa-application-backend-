@@ -4,11 +4,13 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import morgan from "morgan";
-import { env } from "./config/env";
+import { env, parseFrontendOrigins } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
+import { adminOtpRouter } from "./modules/admin-otp/admin-otp.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { formsRouter } from "./modules/forms/forms.routes";
 import { adminLinksRouter, publicLinksRouter } from "./modules/links/links.routes";
+import { otpRouter } from "./modules/otp/otp.routes";
 import {
   adminSubmissionsRouter,
   publicSubmissionsRouter,
@@ -16,18 +18,19 @@ import {
 
 export function createApp(): express.Express {
   const app = express();
+  const allowedOrigins = parseFrontendOrigins(env.FRONTEND_URL);
 
   app.set("trust proxy", 1);
 
   app.use(
     helmet({
-      crossOriginResourcePolicy: { policy: "same-site" },
+      crossOriginResourcePolicy: { policy: "cross-origin" },
     }),
   );
 
   app.use(
     cors({
-      origin: env.FRONTEND_URL,
+      origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
       credentials: true,
     }),
   );
@@ -52,15 +55,21 @@ export function createApp(): express.Express {
   app.use(cookieParser());
   app.use(express.json({ limit: "1mb" }));
 
+  app.get("/", (_req, res) => {
+    res.json({ ok: true, service: "igl-visa-help-api" });
+  });
+
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
 
   app.use("/api/forms", formsRouter);
+  app.use("/api/otp", otpRouter);
   app.use("/api/links", publicLinksRouter);
   app.use("/api/submissions", publicSubmissionsRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/admin/links", adminLinksRouter);
+  app.use("/api/admin", adminOtpRouter);
   app.use("/api/admin", adminSubmissionsRouter);
 
   app.use(notFoundHandler);
