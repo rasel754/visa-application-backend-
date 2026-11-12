@@ -356,7 +356,10 @@ export async function buildSubmissionPdfBuffer(
             continue;
           }
 
-          const labelText = `${sanitizePdfText(field.label)}:`;
+          const displayLabel = field.subgroup
+            ? `${field.subgroup} - ${field.label}`
+            : field.label;
+          const labelText = `${sanitizePdfText(displayLabel)}:`;
           const valueText = answered ? formatScalarAnswer(field, rawVal) : "--";
 
           doc.font("Helvetica-Bold").fontSize(9.5);
@@ -395,13 +398,8 @@ export async function buildSubmissionPdfBuffer(
       }
     };
 
-    renderSectionGroups(groupFieldsBySection(submission.commonFields));
-    if (submission.profileFields.length > 0) {
-      renderSectionGroups(
-        groupFieldsBySection(submission.profileFields),
-        `Profession Details - ${submission.professionLabel}`,
-      );
-    }
+    const orderedAllFields = [...submission.commonFields, ...submission.profileFields];
+    renderSectionGroups(groupFieldsBySection(orderedAllFields));
 
     // Documents checklist section
     const uploadedKeys = new Set(submission.documents.map((d) => d.documentKey));

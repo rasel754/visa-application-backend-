@@ -257,6 +257,7 @@ adminSubmissionsRouter.get(
       const form = resolveVisitFormForProfession(submission.countryCode, professionKey);
       const commonSections = form ? groupFieldsBySection(form.commonFields) : [];
       const professionSections = form ? groupFieldsBySection(form.profileFields) : [];
+      const orderedSections = form ? groupFieldsBySection(form.allFields) : [];
 
       res.json({
         id: submission.id,
@@ -288,7 +289,7 @@ adminSubmissionsRouter.get(
         })),
         commonSections,
         professionSections,
-        sections: [...commonSections, ...professionSections],
+        sections: orderedSections,
         commonDocuments: form?.commonDocuments ?? [],
         additionalDocuments: form?.additionalDocuments ?? [],
         requiredDocuments: form?.allDocuments ?? [],

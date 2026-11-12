@@ -4,6 +4,7 @@ import { ERROR_MESSAGES } from "./errors";
 export interface ValidationFieldSpec {
   key: string;
   label: string;
+  subgroup?: string;
   type: "text" | "date" | "email" | "tel" | "number" | "select" | "textarea" | "table";
   required: boolean;
 }
@@ -44,7 +45,8 @@ export interface NumberFieldConstraint {
 }
 
 export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
-  // 1) Names (max 40, no numbers)
+  // 1) Names (max 80 for full applicant name, 40-60 for others, no numbers)
+  applicant_name: { minLength: 2, maxLength: 80, disallowNumbers: true, requireLetter: true },
   surname: { maxLength: 40, disallowNumbers: true, requireLetter: true },
   given_names: { maxLength: 40, disallowNumbers: true, requireLetter: true },
   surname_at_birth: { maxLength: 40, disallowNumbers: true, requireLetter: true },
@@ -57,11 +59,44 @@ export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
   other_nationalities: { maxLength: 50, disallowNumbers: true, requireLetter: true },
   religion: { maxLength: 50, disallowNumbers: true, requireLetter: true },
 
-  // 3) Family names (max 60, no numbers)
+  // 3) Family names & nationalities (max 60 / 50, no numbers)
   fathers_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
+  fathers_nationality: { maxLength: 50, disallowNumbers: true, requireLetter: true },
   mothers_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
+  mothers_nationality: { maxLength: 50, disallowNumbers: true, requireLetter: true },
   spouse_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
+  spouse_nationality: { maxLength: 50, disallowNumbers: true, requireLetter: true },
   spouse_nationality_nid: { maxLength: 60 },
+  child_1_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
+  child_1_nationality: { maxLength: 50, disallowNumbers: true, requireLetter: true },
+  child_2_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
+  child_2_nationality: { maxLength: 50, disallowNumbers: true, requireLetter: true },
+
+  // Education (High School, College, Last Education)
+  high_school_years: {
+    maxLength: 30,
+    requireDigit: true,
+    pattern: /^[A-Za-z0-9\s\-–/,]+$/,
+    patternError: ERROR_MESSAGES.yearsInvalid,
+  },
+  high_school_institution: { maxLength: 120, requireLetter: true },
+  high_school_major: { maxLength: 80, requireLetter: true },
+  college_years: {
+    maxLength: 30,
+    requireDigit: true,
+    pattern: /^[A-Za-z0-9\s\-–/,]+$/,
+    patternError: ERROR_MESSAGES.yearsInvalid,
+  },
+  college_institution: { maxLength: 120, requireLetter: true },
+  college_major: { maxLength: 80, requireLetter: true },
+  last_education_years: {
+    maxLength: 30,
+    requireDigit: true,
+    pattern: /^[A-Za-z0-9\s\-–/,]+$/,
+    patternError: ERROR_MESSAGES.yearsInvalid,
+  },
+  last_education_institution: { maxLength: 120, requireLetter: true },
+  last_education_major: { maxLength: 80, requireLetter: true },
 
   // Passport & travel
   passport_issued_by: { maxLength: 80, requireLetter: true },
@@ -113,12 +148,13 @@ export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
   nature_of_business: { maxLength: 100, requireLetter: true },
   business_address: { minLength: 5, maxLength: 250, requireLetter: true },
 
-  // Employee
+  // Employee & Work
   employer_name: { maxLength: 100, requireLetter: true },
   employer_address: { minLength: 5, maxLength: 250, requireLetter: true },
   designation: { maxLength: 60, requireLetter: true },
   department: { maxLength: 60, requireLetter: true },
   employee_id_number: { maxLength: 40 },
+  supervisor_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
   approved_leave_dates: { minLength: 5, maxLength: 80 },
 };
 
@@ -195,9 +231,12 @@ const PAST_OR_TODAY_DATE_KEYS = new Set([
   "fathers_date_of_birth",
   "mothers_date_of_birth",
   "spouse_date_of_birth",
+  "child_1_date_of_birth",
+  "child_2_date_of_birth",
   "business_start_date",
   "date_of_joining",
   "employment_start_date",
+  "study_start_date",
 ]);
 
 const STRICT_PAST_DATE_KEYS = new Set(["date_of_birth", "passport_issue_date"]);
@@ -368,17 +407,23 @@ function getStringAnswer(allAnswers: Record<string, unknown>, key: string): stri
   return typeof val === "string" ? val.trim() : "";
 }
 
+function getRequiredFieldLabel(field: ValidationFieldSpec): string {
+  return field.subgroup ? `${field.subgroup} - ${field.label}` : field.label;
+}
+
 export function validateFieldWithRules(
   field: ValidationFieldSpec,
   rawValue: unknown,
   allAnswers: Record<string, unknown>,
 ): { error: string | null; normalized: string | number } {
+  const requiredLabel = getRequiredFieldLabel(field);
+
   // Handle tuition even if field.type is "number" or "text"
   if (isTuitionKey(field.key)) {
     const strVal = normalizeFieldScalarValue(field, rawValue);
     if (!strVal) {
       return {
-        error: field.required ? ERROR_MESSAGES.requiredField(field.label) : null,
+        error: field.required ? ERROR_MESSAGES.requiredField(requiredLabel) : null,
         normalized: "",
       };
     }
@@ -402,7 +447,7 @@ export function validateFieldWithRules(
 
     if (!str) {
       return {
-        error: field.required ? ERROR_MESSAGES.requiredField(field.label) : null,
+        error: field.required ? ERROR_MESSAGES.requiredField(requiredLabel) : null,
         normalized: "",
       };
     }
@@ -430,7 +475,7 @@ export function validateFieldWithRules(
 
   if (!normalized) {
     return {
-      error: field.required ? ERROR_MESSAGES.requiredField(field.label) : null,
+      error: field.required ? ERROR_MESSAGES.requiredField(requiredLabel) : null,
       normalized: "",
     };
   }
@@ -612,6 +657,15 @@ export function validateFieldWithRules(
 
     if (field.key === "course_end_date" && isValidYmdDate(courseStart) && normalized < courseStart) {
       return { error: ERROR_MESSAGES.courseEndBeforeStart, normalized };
+    }
+
+    const studyStart = getStringAnswer(allAnswers, "study_start_date");
+    if (
+      field.key === "expected_completion_date" &&
+      isValidYmdDate(studyStart) &&
+      normalized < studyStart
+    ) {
+      return { error: ERROR_MESSAGES.expectedCompletionBeforeStart, normalized };
     }
   }
 

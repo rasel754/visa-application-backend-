@@ -170,6 +170,10 @@ export function validateSubmissionRequest(
     throw new AppError(400, ERROR_MESSAGES.genericValidation, fieldErrors);
   }
 
+  const directApplicantName =
+    typeof sanitizedAnswers["applicant_name"] === "string"
+      ? sanitizedAnswers["applicant_name"]
+      : "";
   const givenNames =
     typeof sanitizedAnswers["given_names"] === "string"
       ? sanitizedAnswers["given_names"]
@@ -181,7 +185,8 @@ export function validateSubmissionRequest(
       ? sanitizedAnswers["full_name"]
       : "";
   const applicantName =
-    ([givenNames, surname].filter(Boolean).join(" ").trim() ||
+    (directApplicantName ||
+      [givenNames, surname].filter(Boolean).join(" ").trim() ||
       fullNameFallback ||
       "Applicant"
     ).slice(0, 255);

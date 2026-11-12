@@ -3,6 +3,11 @@ import path from "node:path";
 import { Profession } from "@prisma/client";
 import { z } from "zod";
 import { env } from "./env";
+import {
+  COMMON_FORM_FIELDS,
+  PROFESSION_FORM_PROFILES,
+  SECTION_DISPLAY_ORDER,
+} from "./form-schema";
 
 export const PROFESSION_KEYS = ["student", "businessman", "employee"] as const;
 export type ProfessionKey = (typeof PROFESSION_KEYS)[number];
@@ -24,6 +29,7 @@ const fieldSchema = z.object({
   type: fieldTypeSchema,
   required: z.boolean(),
   section: z.string().min(1),
+  subgroup: z.string().optional(),
 });
 
 const documentSchema = z.object({
@@ -281,9 +287,9 @@ export function getVisitForm(countryCode: string): VisitFormPayload | null {
     official_form: visit.official_form,
     source_url: visit.source_url ?? "",
     last_verified_at: visit.last_verified_at ?? "",
-    common_information_fields: visit.common_information_fields,
-    common_required_documents: visit.common_required_documents,
-    applicant_profiles: visit.applicant_profiles,
+    common_information_fields: COMMON_FORM_FIELDS,
+    common_required_documents: [],
+    applicant_profiles: PROFESSION_FORM_PROFILES,
   };
 }
 
@@ -297,20 +303,10 @@ export function resolveVisitFormForProfession(
   }
 
   const visit = country.visa_types.visit;
-  const profile = professionKey ? visit.applicant_profiles[professionKey] : null;
+  const profile = professionKey ? PROFESSION_FORM_PROFILES[professionKey] : null;
 
-  const commonFields = visit.common_information_fields;
+  const commonFields = COMMON_FORM_FIELDS;
   const profileFields = profile ? profile.profile_information_fields : [];
-  const commonDocuments: GroupedFormDocument[] = visit.common_required_documents.map((doc) => ({
-    ...doc,
-    group: "common",
-  }));
-  const additionalDocuments: GroupedFormDocument[] = profile && professionKey
-    ? profile.additional_documents.map((doc) => ({
-        ...doc,
-        group: professionKey,
-      }))
-    : [];
 
   return {
     country: country.country,
@@ -324,9 +320,9 @@ export function resolveVisitFormForProfession(
     commonFields,
     profileFields,
     allFields: [...commonFields, ...profileFields],
-    commonDocuments,
-    additionalDocuments,
-    allDocuments: [...commonDocuments, ...additionalDocuments],
+    commonDocuments: [],
+    additionalDocuments: [],
+    allDocuments: [],
   };
 }
 
@@ -340,8 +336,18 @@ export function groupFieldsBySection(fields: FormField[]): SectionGroup[] {
       groups.set(field.section, [field]);
     }
   }
-  return Array.from(groups.entries()).map(([section, sectionFields]) => ({
-    section,
-    fields: sectionFields,
-  }));
+  const orderList: readonly string[] = SECTION_DISPLAY_ORDER;
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => {
+      const idxA = orderList.indexOf(a);
+      const idxB = orderList.indexOf(b);
+      if (idxA === -1 && idxB === -1) return 0;
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    })
+    .map(([section, sectionFields]) => ({
+      section,
+      fields: sectionFields,
+    }));
 }
