@@ -221,11 +221,13 @@ export function initFormData(): void {
 }
 
 export function listCountries(): CountrySummary[] {
-  return loadedCountries.map((c) => ({
-    country: c.country,
-    country_code: c.country_code,
-    region: c.region,
-  }));
+  return loadedCountries
+    .map((c) => ({
+      country: c.country,
+      country_code: c.country_code,
+      region: c.region,
+    }))
+    .sort((a, b) => a.country.localeCompare(b.country, "en", { sensitivity: "base" }));
 }
 
 export function getCountry(countryCode: string): CountryData | null {

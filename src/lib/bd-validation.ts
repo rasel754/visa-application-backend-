@@ -45,8 +45,8 @@ export interface NumberFieldConstraint {
 }
 
 export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
-  // 1) Names (max 80 for full applicant name, 40-60 for others, no numbers)
-  applicant_name: { minLength: 2, maxLength: 80, disallowNumbers: true, requireLetter: true },
+  // 1) Names (max 60 for full applicant name, 40 for others, no numbers)
+  applicant_name: { minLength: 2, maxLength: 60, disallowNumbers: true, requireLetter: true },
   surname: { maxLength: 40, disallowNumbers: true, requireLetter: true },
   given_names: { maxLength: 40, disallowNumbers: true, requireLetter: true },
   surname_at_birth: { maxLength: 40, disallowNumbers: true, requireLetter: true },
@@ -72,27 +72,27 @@ export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
   child_2_name: { maxLength: 60, disallowNumbers: true, requireLetter: true },
   child_2_nationality: { maxLength: 50, disallowNumbers: true, requireLetter: true },
 
-  // Education (High School, College, Last Education)
+  // Education (Last Education, High School, College)
   high_school_years: {
-    maxLength: 30,
+    maxLength: 9,
     requireDigit: true,
-    pattern: /^[A-Za-z0-9\s\-–/,]+$/,
+    pattern: /^\d{4}-\d{4}$/,
     patternError: ERROR_MESSAGES.yearsInvalid,
   },
   high_school_institution: { maxLength: 120, requireLetter: true },
   high_school_major: { maxLength: 80, requireLetter: true },
   college_years: {
-    maxLength: 30,
+    maxLength: 9,
     requireDigit: true,
-    pattern: /^[A-Za-z0-9\s\-–/,]+$/,
+    pattern: /^\d{4}-\d{4}$/,
     patternError: ERROR_MESSAGES.yearsInvalid,
   },
   college_institution: { maxLength: 120, requireLetter: true },
   college_major: { maxLength: 80, requireLetter: true },
   last_education_years: {
-    maxLength: 30,
+    maxLength: 9,
     requireDigit: true,
-    pattern: /^[A-Za-z0-9\s\-–/,]+$/,
+    pattern: /^\d{4}-\d{4}$/,
     patternError: ERROR_MESSAGES.yearsInvalid,
   },
   last_education_institution: { maxLength: 120, requireLetter: true },
@@ -149,7 +149,7 @@ export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
   business_address: { minLength: 5, maxLength: 250, requireLetter: true },
 
   // Employee & Work
-  employer_name: { maxLength: 100, requireLetter: true },
+  employer_name: { maxLength: 50, disallowNumbers: true, requireLetter: true },
   employer_address: { minLength: 5, maxLength: 250, requireLetter: true },
   designation: { maxLength: 60, requireLetter: true },
   department: { maxLength: 60, requireLetter: true },
@@ -248,6 +248,14 @@ export function isBdMobileKey(key: string): boolean {
 export function isTuitionKey(key: string): boolean {
   const lower = key.toLowerCase();
   return lower === "tuition_fee" || lower.includes("tuition");
+}
+
+export function isEducationYearsKey(key: string): boolean {
+  return (
+    key === "high_school_years" ||
+    key === "college_years" ||
+    key === "last_education_years"
+  );
 }
 
 export function isDigitsOnlyTextKey(key: string): boolean {
@@ -395,6 +403,9 @@ export function normalizeFieldScalarValue(
   }
   if (isBdMobileKey(field.key)) {
     return normalizeBdMobileInput(rawStr);
+  }
+  if (isEducationYearsKey(field.key)) {
+    return rawStr.replace(/[\u2013\u2014]/g, "-").replace(/\s*-\s*/g, "-");
   }
   if (shouldUppercaseField(field)) {
     return rawStr.toUpperCase();
@@ -549,6 +560,25 @@ export function validateFieldWithRules(
         error: constraint.patternError ?? ERROR_MESSAGES.genericValidation,
         normalized,
       };
+    }
+    if (isEducationYearsKey(field.key)) {
+      const [fromStr, toStr] = normalized.split("-");
+      const fromYear = Number(fromStr);
+      const toYear = Number(toStr);
+      const currentYear = Number(getTodayYmd().slice(0, 4));
+      if (
+        !Number.isInteger(fromYear) ||
+        !Number.isInteger(toYear) ||
+        fromYear < 1950 ||
+        fromYear > currentYear + 1 ||
+        toYear < 1950 ||
+        toYear > currentYear + 10
+      ) {
+        return { error: ERROR_MESSAGES.yearsInvalid, normalized };
+      }
+      if (toYear < fromYear) {
+        return { error: ERROR_MESSAGES.yearsOrderInvalid, normalized };
+      }
     }
   }
 

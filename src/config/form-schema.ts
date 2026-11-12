@@ -65,9 +65,9 @@ function buildEducationFields(
 }
 
 export const EDUCATIONAL_INFORMATION_FIELDS: FormField[] = [
+  ...buildEducationFields("last_education", "Last Education", true),
   ...buildEducationFields("high_school", "High School", false),
   ...buildEducationFields("college", "College", false),
-  ...buildEducationFields("last_education", "Last Education", true),
 ];
 
 function buildFamilyMemberFields(
@@ -130,7 +130,7 @@ export const TRAVEL_INFORMATION_FIELDS: FormField[] = [
     key: "intended_departure_date",
     label: "Date of Departure",
     type: "date",
-    required: true,
+    required: false,
     section: "Travel Information",
   },
   {
@@ -356,3 +356,4 @@ export const SECTION_DISPLAY_ORDER = [
   "Family Information",
   "Travel Information",
 ] as const;
+
