@@ -3,12 +3,44 @@ import type { NextFunction, Request, Response } from "express";
 import { Router } from "express";
 import { z } from "zod";
 import { BD_MOBILE_FULL_REGEX, normalizeBdMobileInput } from "../../lib/bd-validation";
-import { getDhakaTodayStartUtc, parseDateBoundary } from "../../lib/dates";
+import {
+  getDhakaThisMonthStartUtc,
+  getDhakaThisWeekStartUtc,
+  getDhakaTodayStartUtc,
+  parseDateBoundary,
+  parseDhakaMonthBoundary,
+} from "../../lib/dates";
 import { AppError, ERROR_MESSAGES } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { requireAdmin } from "../../middleware/auth";
 import { validateBody } from "../../middleware/validate";
 import { syncExpiredOtps } from "../otp/otp.routes";
+
+export type OtpStatsPeriod = "today" | "week" | "month" | "all";
+
+export interface OtpStatsResponse {
+  period: OtpStatsPeriod;
+  month: string | null;
+  label: string;
+  sent: number;
+  verified: number;
+  expired: number;
+  failed: number;
+  successRate: number;
+  sentToday: number;
+  verifiedToday: number;
+  expiredToday: number;
+  failedToday: number;
+}
+
+function normalizePeriod(raw: unknown): OtpStatsPeriod {
+  if (typeof raw !== "string") return "today";
+  const lower = raw.trim().toLowerCase();
+  if (lower === "all" || lower === "all-time" || lower === "alltime") return "all";
+  if (lower === "month" || lower === "monthly" || lower === "this-month") return "month";
+  if (lower === "week" || lower === "weekly" || lower === "this-week") return "week";
+  return "today";
+}
 
 const blockPhoneSchema = z.object({
   phone: z.string().trim().min(1, ERROR_MESSAGES.invalidBdPhone),
@@ -21,18 +53,19 @@ adminOtpRouter.use(requireAdmin);
 
 adminOtpRouter.get(
   "/otp-stats",
-  async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       await syncExpiredOtps();
       const todayStart = getDhakaTodayStartUtc();
 
-      const grouped = await prisma.otpVerification.groupBy({
+      // 1. Calculate today's stats for backward compatibility
+      const todayGrouped = await prisma.otpVerification.groupBy({
         by: ["status"],
         where: { createdAt: { gte: todayStart } },
         _count: { status: true },
       });
 
-      const counts: Record<OtpStatus, number> = {
+      const todayCounts: Record<OtpStatus, number> = {
         SENT: 0,
         VERIFIED: 0,
         EXPIRED: 0,
@@ -40,24 +73,101 @@ adminOtpRouter.get(
         USED: 0,
       };
 
-      for (const row of grouped) {
-        counts[row.status] = row._count.status;
+      for (const row of todayGrouped) {
+        todayCounts[row.status] = row._count.status;
       }
 
       const sentToday =
-        counts.SENT + counts.VERIFIED + counts.USED + counts.EXPIRED + counts.FAILED;
-      const verifiedToday = counts.VERIFIED + counts.USED;
-      const expiredToday = counts.EXPIRED;
-      const failedToday = counts.FAILED;
-      const successRate =
-        sentToday > 0 ? Math.round((verifiedToday / sentToday) * 100) : 0;
+        todayCounts.SENT +
+        todayCounts.VERIFIED +
+        todayCounts.USED +
+        todayCounts.EXPIRED +
+        todayCounts.FAILED;
+      const verifiedToday = todayCounts.VERIFIED + todayCounts.USED;
+      const expiredToday = todayCounts.EXPIRED;
+      const failedToday = todayCounts.FAILED;
+
+      // 2. Check if a specific month was requested (?month=YYYY-MM)
+      const rawMonth = typeof req.query.month === "string" ? req.query.month.trim() : "";
+      const monthBoundary = rawMonth ? parseDhakaMonthBoundary(rawMonth) : null;
+
+      let period: OtpStatsPeriod = normalizePeriod(req.query.period);
+      let where: Prisma.OtpVerificationWhereInput = {};
+      let label = "Today";
+      let selectedMonth: string | null = null;
+
+      if (monthBoundary) {
+        period = "month";
+        selectedMonth = rawMonth;
+        label = monthBoundary.label; // e.g. "October 2026"
+        where = { createdAt: { gte: monthBoundary.startUtc, lt: monthBoundary.endUtc } };
+      } else if (period === "today") {
+        label = "Today";
+        where = { createdAt: { gte: todayStart } };
+      } else if (period === "week") {
+        label = "This Week";
+        const thisWeekStart = getDhakaThisWeekStartUtc();
+        where = { createdAt: { gte: thisWeekStart } };
+      } else if (period === "month") {
+        label = "This Month";
+        const thisMonthStart = getDhakaThisMonthStartUtc();
+        where = { createdAt: { gte: thisMonthStart } };
+      } else {
+        period = "all";
+        label = "All Time";
+        where = {};
+      }
+
+      let sent = sentToday;
+      let verified = verifiedToday;
+      let expired = expiredToday;
+      let failed = failedToday;
+
+      if (monthBoundary || period !== "today") {
+        const periodGrouped = await prisma.otpVerification.groupBy({
+          by: ["status"],
+          where,
+          _count: { status: true },
+        });
+
+        const periodCounts: Record<OtpStatus, number> = {
+          SENT: 0,
+          VERIFIED: 0,
+          EXPIRED: 0,
+          FAILED: 0,
+          USED: 0,
+        };
+
+        for (const row of periodGrouped) {
+          periodCounts[row.status] = row._count.status;
+        }
+
+        sent =
+          periodCounts.SENT +
+          periodCounts.VERIFIED +
+          periodCounts.USED +
+          periodCounts.EXPIRED +
+          periodCounts.FAILED;
+        verified = periodCounts.VERIFIED + periodCounts.USED;
+        expired = periodCounts.EXPIRED;
+        failed = periodCounts.FAILED;
+      }
+
+      const successRate = sent > 0 ? Math.round((verified / sent) * 100) : 0;
 
       res.json({
+        period,
+        month: selectedMonth,
+        label,
+        sent,
+        verified,
+        expired,
+        failed,
+        successRate,
         sentToday,
         verifiedToday,
         expiredToday,
         failedToday,
-        successRate,
       });
     } catch (err) {
       next(err);
