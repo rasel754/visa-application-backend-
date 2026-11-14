@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { env } from "../../config/env";
 import { BD_MOBILE_FULL_REGEX, normalizeBdMobileInput } from "../../lib/bd-validation";
+import { getDhakaTodayStartUtc } from "../../lib/dates";
 import { AppError, ERROR_MESSAGES } from "../../lib/errors";
 import { prisma } from "../../lib/prisma";
 import { formatOtpSmsMessage, sendSms } from "../../lib/sms";
@@ -94,20 +95,41 @@ otpRouter.post(
         return;
       }
 
-      const windowStart = new Date(Date.now() - SEND_WINDOW_MS);
-      const recentCount = await prisma.otpVerification.count({
+      // Requirement 3: One user can get OTP 3 times per day (handled in backend)
+      const todayStart = getDhakaTodayStartUtc();
+      const dailyCount = await prisma.otpVerification.count({
         where: {
           phone: normalizedPhone,
-          createdAt: { gte: windowStart },
-          OR: [
-            { status: { not: OtpStatus.FAILED } },
-            { attempts: { gte: env.OTP_MAX_ATTEMPTS } },
-          ],
+          createdAt: { gte: todayStart },
+          status: { not: OtpStatus.FAILED },
         },
       });
 
-      if (recentCount >= MAX_SENDS_PER_PHONE_WINDOW) {
-        next(new AppError(429, ERROR_MESSAGES.otpTooManySends));
+      if (dailyCount >= 3) {
+        next(new AppError(429, ERROR_MESSAGES.otpDailyLimit));
+        return;
+      }
+
+      // Requirement 2: User can't get/resend OTP while existing OTP is not expired (handled in backend)
+      const activeOtp = await prisma.otpVerification.findFirst({
+        where: {
+          phone: normalizedPhone,
+          status: OtpStatus.SENT,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (activeOtp) {
+        const remainingSeconds = Math.max(
+          1,
+          Math.ceil((activeOtp.expiresAt.getTime() - Date.now()) / 1000),
+        );
+        next(
+          new AppError(400, ERROR_MESSAGES.otpStillActive, {
+            remainingSeconds: String(remainingSeconds),
+          }),
+        );
         return;
       }
 
@@ -160,6 +182,7 @@ otpRouter.post(
       res.json({
         sent: true,
         expiresInSeconds: env.OTP_EXPIRY_MINUTES * 60,
+        dailyRemaining: Math.max(0, 3 - (dailyCount + 1)),
         ...(isDevFallback ? { devOtp: otpCode } : {}),
       });
     } catch (err) {

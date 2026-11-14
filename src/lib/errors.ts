@@ -97,6 +97,10 @@ export const ERROR_MESSAGES = {
   otpAlreadyUsed:
     "This verification code has already been used. Please request a new code.",
   otpRateLimit: "Too many verification tries. Please wait 15 minutes and try again.",
+  otpStillActive:
+    "Current OTP is still active. Please wait until it expires before requesting a new code.",
+  otpDailyLimit:
+    "You have reached the maximum limit of 3 OTP requests per day. Please try again tomorrow.",
   otpPhoneBlocked:
     "This number cannot receive a verification code. Please contact our office.",
   phoneAlreadyBlocked: "This mobile number is already blocked.",

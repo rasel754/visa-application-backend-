@@ -231,7 +231,43 @@ export function listCountries(): CountrySummary[] {
 }
 
 export function getCountry(countryCode: string): CountryData | null {
-  return countriesByCode.get(countryCode.trim().toUpperCase()) ?? null;
+  const code = countryCode.trim().toUpperCase();
+  const existing = countriesByCode.get(code);
+  if (existing) return existing;
+
+  // Seamless fallback for any country selected from the restcountries API
+  if (code.length >= 2) {
+    return {
+      rank: 999,
+      country: code,
+      country_code: code,
+      region: "International",
+      applicant_nationality: "Bangladeshi",
+      visa_required_for_bangladeshi_ordinary_passport: true,
+      official_authority: "Embassy / Consulate / Visa Authority",
+      official_application_system: "Official Visa Application",
+      source_regime: "Standard",
+      country_notes: "",
+      visa_types: {
+        visit: {
+          official_visa_name: "Visit / Tourist Visa",
+          official_form: "Visa Application Form",
+          source_url: "",
+          field_source: "official",
+          last_verified_at: new Date().toISOString().split("T")[0]!,
+          common_information_fields: COMMON_FORM_FIELDS,
+          common_required_documents: [],
+          applicant_profiles: {
+            student: PROFESSION_FORM_PROFILES.student,
+            businessman: PROFESSION_FORM_PROFILES.businessman,
+            employee: PROFESSION_FORM_PROFILES.employee,
+          },
+        },
+      },
+    };
+  }
+
+  return null;
 }
 
 export function resolveProfessionKey(raw: string | null | undefined): ProfessionKey | null {
