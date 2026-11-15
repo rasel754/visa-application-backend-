@@ -97,6 +97,8 @@ export const TEXT_FIELD_CONSTRAINTS: Record<string, TextFieldConstraint> = {
   },
   last_education_institution: { maxLength: 120, requireLetter: true },
   last_education_major: { maxLength: 80, requireLetter: true },
+  last_education_degree: { maxLength: 80, requireLetter: true },
+  has_no_education: { maxLength: 20 },
 
   // Passport & travel
   passport_issued_by: { maxLength: 80, requireLetter: true },
@@ -428,6 +430,30 @@ export function validateFieldWithRules(
   allAnswers: Record<string, unknown>,
 ): { error: string | null; normalized: string | number } {
   const requiredLabel = getRequiredFieldLabel(field);
+
+  // If applicant has no formal education, last_education fields are not required and pass cleanly
+  if (
+    field.key === "last_education_degree" ||
+    field.key === "last_education_institution" ||
+    field.key === "has_no_education"
+  ) {
+    const hasNoEdu =
+      allAnswers["has_no_education"] === true ||
+      allAnswers["has_no_education"] === "yes" ||
+      allAnswers["has_no_education"] === "true" ||
+      allAnswers["no_education"] === true ||
+      allAnswers["no_education"] === "yes";
+
+    if (hasNoEdu) {
+      if (field.key === "has_no_education") {
+        return { error: null, normalized: "yes" };
+      }
+      return { error: null, normalized: "" };
+    }
+    if (field.key === "has_no_education") {
+      return { error: null, normalized: "" };
+    }
+  }
 
   // Handle tuition even if field.type is "number" or "text"
   if (isTuitionKey(field.key)) {

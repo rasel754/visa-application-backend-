@@ -25,7 +25,7 @@ export const GENERAL_INFORMATION_FIELDS: FormField[] = [
   {
     key: "present_address",
     label: "Current Home Address",
-    type: "textarea",
+    type: "text",
     required: true,
     section: "General Information",
   },
@@ -65,9 +65,37 @@ function buildEducationFields(
 }
 
 export const EDUCATIONAL_INFORMATION_FIELDS: FormField[] = [
-  ...buildEducationFields("last_education", "Last Education", true),
-  ...buildEducationFields("high_school", "High School", false),
-  ...buildEducationFields("college", "College", false),
+  {
+    key: "has_no_education",
+    label: "No Formal Education",
+    type: "text",
+    required: false,
+    section: "Educational Information",
+  },
+  {
+    key: "last_education_degree",
+    label: "Degree Name",
+    type: "text",
+    required: true,
+    section: "Educational Information",
+    subgroup: "Last Education",
+  },
+  {
+    key: "last_education_institution",
+    label: "Institution Name",
+    type: "text",
+    required: false,
+    section: "Educational Information",
+    subgroup: "Last Education",
+  },
+  {
+    key: "other_education",
+    label: "Other Education",
+    type: "table",
+    required: false,
+    section: "Educational Information",
+    subgroup: "Other Education",
+  },
 ];
 
 function buildFamilyMemberFields(
@@ -106,9 +134,6 @@ function buildFamilyMemberFields(
 export const FAMILY_INFORMATION_FIELDS: FormField[] = [
   ...buildFamilyMemberFields("fathers", "Father", true),
   ...buildFamilyMemberFields("mothers", "Mother", true),
-  ...buildFamilyMemberFields("spouse", "Spouse", false),
-  ...buildFamilyMemberFields("child_1", "Child 1", false),
-  ...buildFamilyMemberFields("child_2", "Child 2", false),
 ];
 
 export const TRAVEL_INFORMATION_FIELDS: FormField[] = [
@@ -164,7 +189,7 @@ export const PROFESSION_FORM_PROFILES: Record<ProfessionKey, ApplicantProfileDat
       {
         key: "institution_address",
         label: "Institution Address",
-        type: "textarea",
+        type: "text",
         required: true,
         section: "Work/Study Information",
       },
@@ -227,7 +252,7 @@ export const PROFESSION_FORM_PROFILES: Record<ProfessionKey, ApplicantProfileDat
       {
         key: "employer_address",
         label: "Employer Address",
-        type: "textarea",
+        type: "text",
         required: true,
         section: "Work Information",
       },
@@ -235,7 +260,7 @@ export const PROFESSION_FORM_PROFILES: Record<ProfessionKey, ApplicantProfileDat
         key: "date_of_joining",
         label: "Employment Date — From",
         type: "date",
-        required: true,
+        required: false,
         section: "Work Information",
       },
       {
@@ -283,7 +308,7 @@ export const PROFESSION_FORM_PROFILES: Record<ProfessionKey, ApplicantProfileDat
       {
         key: "employer_address",
         label: "Employer Address",
-        type: "textarea",
+        type: "text",
         required: true,
         section: "Work Information",
       },
@@ -305,7 +330,7 @@ export const PROFESSION_FORM_PROFILES: Record<ProfessionKey, ApplicantProfileDat
         key: "date_of_joining",
         label: "Employment Date — From (joining date)",
         type: "date",
-        required: true,
+        required: false,
         section: "Work Information",
       },
       {

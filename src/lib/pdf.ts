@@ -75,6 +75,12 @@ function isTableRowNonEmpty(row: Record<string, unknown>): boolean {
 function getTableColumns(
   fieldKey: string,
 ): Array<{ key: string; header: string; widthWeight: number }> {
+  if (fieldKey === "other_education") {
+    return [
+      { key: "degree", header: "Degree / Qualification", widthWeight: 3.5 },
+      { key: "institution", header: "Institution Name", widthWeight: 4.5 },
+    ];
+  }
   if (fieldKey === "education_history") {
     return [
       { key: "institution", header: "Institution", widthWeight: 3.2 },
@@ -273,9 +279,25 @@ export async function buildSubmissionPdfBuffer(
           });
         doc.y = barY + 30;
 
+        const hasNoEducationAnswer =
+          submission.answers["has_no_education"] === true ||
+          submission.answers["has_no_education"] === "yes" ||
+          submission.answers["has_no_education"] === "true";
+
         for (const field of fieldsToRender) {
-          const rawVal = submission.answers[field.key];
-          const answered = isFieldAnswered(field, rawVal);
+          if (group.section === "Educational Information") {
+            if (hasNoEducationAnswer) {
+              if (field.key !== "has_no_education") continue;
+            } else {
+              if (field.key === "has_no_education") continue;
+            }
+          }
+
+          const rawVal =
+            field.key === "has_no_education" && hasNoEducationAnswer
+              ? "No Formal Education"
+              : submission.answers[field.key];
+          const answered = isFieldAnswered(field, rawVal) || (field.key === "has_no_education" && hasNoEducationAnswer);
 
           if (field.type === "table") {
             const rows = Array.isArray(rawVal)
@@ -488,7 +510,7 @@ export async function buildSubmissionPdfBuffer(
         .fontSize(8.5)
         .fillColor("#64748B")
         .text(
-          "IGL Visa Help -- This form was filled online by the applicant.",
+          "Design and Developed by: IGL Web Ltd | +880-1958-666999",
           leftX,
           footerY,
           { width: pageWidth - 90, lineBreak: false },
