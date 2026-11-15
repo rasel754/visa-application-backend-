@@ -138,10 +138,12 @@ export async function buildSubmissionPdfBuffer(
   options: PdfBuildOptions,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    // A4 dimensions: 595.28 x 841.89 points
     const doc = new PDFDocument({
       size: "A4",
-      margins: { top: 45, bottom: 55, left: 45, right: 45 },
+      margins: { top: 20, bottom: 20, left: 28, right: 28 },
       bufferPages: true,
+      autoFirstPage: true,
       info: {
         Title: `IGL Visa Help - ${submission.reference}`,
         Author: "IGL Visa Help",
@@ -153,378 +155,447 @@ export async function buildSubmissionPdfBuffer(
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", (err: Error) => reject(err));
 
-    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-    const leftX = doc.page.margins.left;
-    const maxY = doc.page.height - doc.page.margins.bottom;
+    // Zero out bottom margin so PDFKit does not auto-insert extra pages
+    doc.page.margins.bottom = 0;
 
-    const ensureSpace = (neededHeight: number): void => {
-      if (doc.y + neededHeight > maxY) {
-        doc.addPage();
-      }
-    };
+    const leftX = 28;
+    const pageWidth = doc.page.width - 56; // 539.28
+    const pageBottomY = doc.page.height; // 841.89
+    const footerY = pageBottomY - 20;
 
-    // Header
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#0F172A").text("IGL Visa Help", leftX, 42);
+    // 1. Header (Compact modern bar)
+    const headerTop = 20;
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(15)
+      .fillColor("#0F172A")
+      .text("IGL Visa Help", leftX, headerTop);
+
     doc
       .font("Helvetica")
-      .fontSize(12)
+      .fontSize(8.5)
       .fillColor("#475569")
-      .text("Visit Visa Application Summary", leftX, doc.y + 2);
+      .text("Visit Visa Application Summary", leftX, headerTop + 17);
 
-    const lineY = doc.y + 8;
+    // Header Right
+    const headerRightW = 240;
+    const headerRightX = leftX + pageWidth - headerRightW;
     doc
-      .strokeColor("#CBD5E1")
-      .lineWidth(1)
-      .moveTo(leftX, lineY)
-      .lineTo(leftX + pageWidth, lineY)
-      .stroke();
-
-    doc.y = lineY + 14;
-
-    // Info box
-    const infoRows: Array<[string, string]> = [
-      ["Submission No.", submission.reference],
-      ["Date Submitted", formatDateDisplay(submission.createdAt)],
-      ["Country", sanitizePdfText(submission.countryName)],
-      ["Visa Type", submission.visaType === "visit" ? "Visit Visa" : sanitizePdfText(submission.visaType)],
-      ["Official Visa Name", sanitizePdfText(submission.officialVisaName)],
-      ["Profession", sanitizePdfText(submission.professionLabel)],
-    ];
-
-    const boxStartY = doc.y;
-    const labelColW = 130;
-    const valueColW = pageWidth - labelColW - 24;
-    let infoHeight = 16;
-    for (const [, val] of infoRows) {
-      doc.font("Helvetica").fontSize(10);
-      const h = Math.max(15, doc.heightOfString(val, { width: valueColW }) + 4);
-      infoHeight += h;
-    }
-
-    doc
-      .roundedRect(leftX, boxStartY, pageWidth, infoHeight, 4)
-      .fillAndStroke("#F8FAFC", "#CBD5E1");
-
-    let curY = boxStartY + 10;
-    for (const [k, v] of infoRows) {
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .fillColor("#334155")
-        .text(k, leftX + 12, curY, { width: labelColW });
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor("#0F172A")
-        .text(v, leftX + 12 + labelColW, curY, { width: valueColW });
-      const rowH = Math.max(15, doc.heightOfString(v, { width: valueColW }) + 4);
-      curY += rowH;
-    }
-
-    doc.y = boxStartY + infoHeight + 18;
-
-    const fieldLabelW = 200;
-    const fieldValueW = pageWidth - fieldLabelW - 14;
-
-    const renderSectionGroups = (groups: SectionGroup[], groupBanner?: string): void => {
-      const renderable = groups.filter((group) => {
-        const hasAnyAnswer = group.fields.some((f) =>
-          isFieldAnswered(f, submission.answers[f.key]),
-        );
-        if (!hasAnyAnswer && !options.includeEmptyOptional) {
-          return false;
-        }
-        return group.fields.some(
-          (f) => isFieldAnswered(f, submission.answers[f.key]) || options.includeEmptyOptional,
-        );
+      .font("Helvetica-Bold")
+      .fontSize(9.5)
+      .fillColor("#1E3A8A")
+      .text(`Ref: ${submission.reference}`, headerRightX, headerTop + 1, {
+        width: headerRightW,
+        align: "right",
       });
 
-      if (renderable.length === 0) return;
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor("#64748B")
+      .text(
+        `Submitted: ${formatDateDisplay(submission.createdAt)}`,
+        headerRightX,
+        headerTop + 16,
+        { width: headerRightW, align: "right" },
+      );
 
-      if (groupBanner) {
-        ensureSpace(78);
-        const bannerY = doc.y;
-        doc.rect(leftX, bannerY, pageWidth, 24).fill("#1E3A8A");
+    const headerDividerY = headerTop + 31;
+    doc
+      .strokeColor("#CBD5E1")
+      .lineWidth(0.75)
+      .moveTo(leftX, headerDividerY)
+      .lineTo(leftX + pageWidth, headerDividerY)
+      .stroke();
+
+    // 2. Info Box (2-column key-value grid)
+    const infoBoxY = headerDividerY + 5;
+    const infoBoxH = 44;
+    doc
+      .roundedRect(leftX, infoBoxY, pageWidth, infoBoxH, 3)
+      .fillAndStroke("#F8FAFC", "#CBD5E1");
+
+    const infoColW = (pageWidth - 24) / 2;
+    const infoRowsLeft: Array<[string, string]> = [
+      ["Submission No.:", submission.reference],
+      ["Country:", sanitizePdfText(submission.countryName)],
+      ["Visa Type:", submission.visaType === "visit" ? "Visit Visa" : sanitizePdfText(submission.visaType)],
+    ];
+    const infoRowsRight: Array<[string, string]> = [
+      ["Date Submitted:", formatDateDisplay(submission.createdAt)],
+      ["Official Visa Name:", sanitizePdfText(submission.officialVisaName)],
+      ["Profession:", sanitizePdfText(submission.professionLabel)],
+    ];
+
+    let infoRowY = infoBoxY + 5;
+    for (let r = 0; r < 3; r++) {
+      const leftItem = infoRowsLeft[r];
+      if (leftItem) {
         doc
           .font("Helvetica-Bold")
-          .fontSize(11)
-          .fillColor("#FFFFFF")
-          .text(sanitizePdfText(groupBanner), leftX + 10, bannerY + 6, {
-            width: pageWidth - 20,
+          .fontSize(7.5)
+          .fillColor("#475569")
+          .text(leftItem[0], leftX + 8, infoRowY, { width: 92 });
+        doc
+          .font("Helvetica")
+          .fontSize(7.5)
+          .fillColor("#0F172A")
+          .text(leftItem[1], leftX + 102, infoRowY, {
+            width: infoColW - 98,
+            lineBreak: false,
           });
-        doc.y = bannerY + 30;
       }
 
-      for (const group of renderable) {
-        const fieldsToRender = group.fields.filter((f) => {
-          const answered = isFieldAnswered(f, submission.answers[f.key]);
-          if (answered) return true;
-          return options.includeEmptyOptional;
-        });
-
-        if (fieldsToRender.length === 0) {
-          continue;
-        }
-
-        ensureSpace(56);
-
-        const barY = doc.y;
-        doc.rect(leftX, barY, pageWidth, 24).fill("#E2E8F0");
+      const rightItem = infoRowsRight[r];
+      if (rightItem) {
+        const rightColStart = leftX + 12 + infoColW;
         doc
           .font("Helvetica-Bold")
-          .fontSize(11)
+          .fontSize(7.5)
+          .fillColor("#475569")
+          .text(rightItem[0], rightColStart, infoRowY, { width: 95 });
+        doc
+          .font("Helvetica")
+          .fontSize(7.5)
           .fillColor("#0F172A")
-          .text(sanitizePdfText(group.section), leftX + 10, barY + 6, {
-            width: pageWidth - 20,
+          .text(rightItem[1], rightColStart + 100, infoRowY, {
+            width: infoColW - 98,
+            lineBreak: false,
           });
-        doc.y = barY + 30;
+      }
 
-        const hasNoEducationAnswer =
-          submission.answers["has_no_education"] === true ||
-          submission.answers["has_no_education"] === "yes" ||
-          submission.answers["has_no_education"] === "true";
+      infoRowY += 12.5;
+    }
 
-        for (const field of fieldsToRender) {
-          if (group.section === "Educational Information") {
-            if (hasNoEducationAnswer) {
-              if (field.key !== "has_no_education") continue;
-            } else {
-              if (field.key === "has_no_education") continue;
-            }
+    doc.y = infoBoxY + infoBoxH + 5;
+
+    // 3. Sections & Fields (2-column layout to fit on 1 page)
+    const orderedAllFields = [...submission.commonFields, ...submission.profileFields];
+    const rawGroups = groupFieldsBySection(orderedAllFields);
+
+    const hasNoEducationAnswer =
+      submission.answers["has_no_education"] === true ||
+      submission.answers["has_no_education"] === "yes" ||
+      submission.answers["has_no_education"] === "true";
+
+    const renderableGroups: SectionGroup[] = [];
+    for (const group of rawGroups) {
+      const answeredFields = group.fields.filter((f) => {
+        if (group.section === "Educational Information") {
+          if (hasNoEducationAnswer) {
+            return f.key === "has_no_education";
           }
+          if (f.key === "has_no_education") return false;
+        }
 
-          const rawVal =
-            field.key === "has_no_education" && hasNoEducationAnswer
-              ? "No Formal Education"
-              : submission.answers[field.key];
-          const answered = isFieldAnswered(field, rawVal) || (field.key === "has_no_education" && hasNoEducationAnswer);
+        const rawVal =
+          f.key === "has_no_education" && hasNoEducationAnswer
+            ? "No Formal Education"
+            : submission.answers[f.key];
 
-          if (field.type === "table") {
-            const rows = Array.isArray(rawVal)
-              ? rawVal.filter(
-                  (r): r is Record<string, unknown> =>
-                    typeof r === "object" &&
-                    r !== null &&
-                    isTableRowNonEmpty(r as Record<string, unknown>),
-                )
-              : [];
+        const answered = isFieldAnswered(f, rawVal);
+        if (answered) return true;
+        return options.includeEmptyOptional;
+      });
 
-            ensureSpace(48);
-            doc
-              .font("Helvetica-Bold")
-              .fontSize(10)
-              .fillColor("#334155")
-              .text(sanitizePdfText(field.label), leftX, doc.y, { width: pageWidth });
-            doc.y += 4;
+      if (answeredFields.length > 0) {
+        renderableGroups.push({ section: group.section, fields: answeredFields });
+      }
+    }
 
-            if (rows.length === 0) {
-              doc
-                .font("Helvetica")
-                .fontSize(10)
-                .fillColor("#64748B")
-                .text("--", leftX + 8, doc.y);
-              doc.y += 14;
-              continue;
-            }
+    const colGap = 10;
+    const halfW = (pageWidth - colGap) / 2;
 
-            const columns = getTableColumns(field.key);
+    for (const group of renderableGroups) {
+      const barY = doc.y;
+      doc.rect(leftX, barY, pageWidth, 14).fill("#F1F5F9");
+      doc.rect(leftX, barY, 3, 14).fill("#1E3A8A");
+
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8)
+        .fillColor("#0F172A")
+        .text(sanitizePdfText(group.section), leftX + 8, barY + 3, {
+          width: pageWidth - 16,
+        });
+
+      doc.y = barY + 16;
+
+      const fields = group.fields;
+      let i = 0;
+      while (i < fields.length) {
+        const fieldA = fields[i]!;
+
+        // Tables span full width
+        if (fieldA.type === "table") {
+          const rawVal = submission.answers[fieldA.key];
+          const rows = Array.isArray(rawVal)
+            ? rawVal.filter(
+                (r): r is Record<string, unknown> =>
+                  typeof r === "object" &&
+                  r !== null &&
+                  isTableRowNonEmpty(r as Record<string, unknown>),
+              )
+            : [];
+
+          const tableTopY = doc.y;
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(7.5)
+            .fillColor("#334155")
+            .text(sanitizePdfText(fieldA.label), leftX, tableTopY);
+          doc.y += 2;
+
+          if (rows.length > 0) {
+            const columns = getTableColumns(fieldA.key);
             const totalWeight = columns.reduce((acc, c) => acc + c.widthWeight, 0);
             const colWidths = columns.map((c) =>
               Math.floor((pageWidth * c.widthWeight) / totalWeight),
             );
 
-            ensureSpace(24);
-            let colX = leftX;
-            const headerY = doc.y;
-            doc.rect(leftX, headerY, pageWidth, 20).fillAndStroke("#F1F5F9", "#CBD5E1");
+            const thY = doc.y;
+            doc.rect(leftX, thY, pageWidth, 13).fillAndStroke("#F8FAFC", "#CBD5E1");
+            let thX = leftX;
             columns.forEach((col, idx) => {
               const w = colWidths[idx] ?? 100;
               doc
                 .font("Helvetica-Bold")
-                .fontSize(9)
+                .fontSize(7)
                 .fillColor("#1E293B")
-                .text(sanitizePdfText(col.header), colX + 5, headerY + 5, { width: w - 10 });
-              colX += w;
+                .text(sanitizePdfText(col.header), thX + 4, thY + 2.5, { width: w - 8 });
+              thX += w;
             });
-            doc.y = headerY + 20;
+            doc.y = thY + 13;
 
-            for (const row of rows) {
-              doc.font("Helvetica").fontSize(9);
-              let rowHeight = 20;
+            for (const r of rows) {
+              const trY = doc.y;
+              doc.rect(leftX, trY, pageWidth, 13).stroke("#E2E8F0");
+              let tdX = leftX;
               columns.forEach((col, idx) => {
-                const cellText = sanitizePdfText(String(row[col.key] ?? "--"));
                 const w = colWidths[idx] ?? 100;
-                const h = doc.heightOfString(cellText, { width: w - 10 }) + 10;
-                if (h > rowHeight) rowHeight = h;
-              });
-
-              ensureSpace(rowHeight + 4);
-              const rowY = doc.y;
-              doc.rect(leftX, rowY, pageWidth, rowHeight).stroke("#CBD5E1");
-              let cellX = leftX;
-              columns.forEach((col, idx) => {
-                const cellText = sanitizePdfText(String(row[col.key] ?? "").trim() || "--");
-                const w = colWidths[idx] ?? 100;
+                const cellText = sanitizePdfText(String(r[col.key] ?? "").trim() || "--");
                 doc
                   .font("Helvetica")
-                  .fontSize(9)
+                  .fontSize(7)
                   .fillColor("#0F172A")
-                  .text(cellText, cellX + 5, rowY + 5, { width: w - 10 });
-                cellX += w;
+                  .text(cellText, tdX + 4, trY + 2.5, { width: w - 8, lineBreak: false });
+                tdX += w;
               });
-              doc.y = rowY + rowHeight;
+              doc.y = trY + 13;
             }
+          } else {
+            doc.font("Helvetica").fontSize(7.5).fillColor("#64748B").text("--", leftX + 4, doc.y);
             doc.y += 10;
-            continue;
           }
 
-          const displayLabel = field.subgroup
-            ? `${field.subgroup} - ${field.label}`
-            : field.label;
-          const labelText = `${sanitizePdfText(displayLabel)}:`;
-          const valueText = answered ? formatScalarAnswer(field, rawVal) : "--";
-
-          doc.font("Helvetica-Bold").fontSize(9.5);
-          const labelH = doc.heightOfString(labelText, { width: fieldLabelW });
-          doc.font("Helvetica").fontSize(9.5);
-          const valH = doc.heightOfString(valueText, { width: fieldValueW });
-          const rowH = Math.max(labelH, valH, 14) + 6;
-
-          ensureSpace(rowH + 4);
-          const rowTop = doc.y;
-
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(9.5)
-            .fillColor("#334155")
-            .text(labelText, leftX, rowTop, { width: fieldLabelW });
-
-          doc
-            .font("Helvetica")
-            .fontSize(9.5)
-            .fillColor(answered ? "#0F172A" : "#64748B")
-            .text(valueText, leftX + fieldLabelW + 14, rowTop, { width: fieldValueW });
-
-          const dividerY = rowTop + rowH - 2;
-          doc
-            .strokeColor("#F1F5F9")
-            .lineWidth(0.75)
-            .moveTo(leftX, dividerY)
-            .lineTo(leftX + pageWidth, dividerY)
-            .stroke();
-
-          doc.y = rowTop + rowH + 2;
+          doc.y += 3;
+          i++;
+          continue;
         }
 
-        doc.y += 10;
-      }
-    };
+        // Long text or textarea can span full width
+        const isFullWidthField = fieldA.type === "textarea";
 
-    const orderedAllFields = [...submission.commonFields, ...submission.profileFields];
-    renderSectionGroups(groupFieldsBySection(orderedAllFields));
+        let fieldB: FormField | undefined;
+        if (!isFullWidthField && i + 1 < fields.length && fields[i + 1]!.type !== "table" && fields[i + 1]!.type !== "textarea") {
+          fieldB = fields[i + 1];
+          i += 2;
+        } else {
+          i++;
+        }
 
-    // Documents checklist section
-    const uploadedKeys = new Set(submission.documents.map((d) => d.documentKey));
-    const statusW = 80;
-    const docLabelW = pageWidth - statusW - 14;
+        const renderFieldCell = (f: FormField, x: number, y: number, w: number): number => {
+          const displayLabel = f.subgroup ? `${f.subgroup} - ${f.label}` : f.label;
+          const labelText = `${sanitizePdfText(displayLabel)}:`;
+          const rawVal =
+            f.key === "has_no_education" && hasNoEducationAnswer
+              ? "No Formal Education"
+              : submission.answers[f.key];
+          const answered = isFieldAnswered(f, rawVal) || (f.key === "has_no_education" && hasNoEducationAnswer);
+          const valText = answered ? formatScalarAnswer(f, rawVal) || "--" : "--";
 
-    const renderDocGroup = (title: string, docs: FormDocument[]): void => {
-      if (docs.length === 0) return;
+          const labelW = Math.min(105, Math.floor(w * 0.42));
+          const valW = w - labelW - 4;
 
-      ensureSpace(70);
-      const docBarY = doc.y;
-      doc.rect(leftX, docBarY, pageWidth, 24).fill("#E2E8F0");
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(11)
-        .fillColor("#0F172A")
-        .text(sanitizePdfText(title), leftX + 10, docBarY + 6, { width: pageWidth - 20 });
-      doc.y = docBarY + 30;
+          doc.font("Helvetica-Bold").fontSize(7.5);
+          const lh = doc.heightOfString(labelText, { width: labelW });
+          doc.font("Helvetica").fontSize(7.5);
+          const vh = doc.heightOfString(valText, { width: valW });
+          const cellH = Math.max(11, lh, vh);
 
-      for (const reqDoc of docs) {
-        const isGiven = uploadedKeys.has(reqDoc.key);
-        const docLabelText = sanitizePdfText(reqDoc.label);
-        const statusText = isGiven ? "Given" : "Not given";
+          doc.font("Helvetica-Bold").fontSize(7.5).fillColor("#475569").text(labelText, x, y, { width: labelW });
+          doc
+            .font("Helvetica")
+            .fontSize(7.5)
+            .fillColor(answered ? "#0F172A" : "#64748B")
+            .text(valText, x + labelW + 4, y, { width: valW });
 
-        doc.font("Helvetica").fontSize(9.5);
-        const lh = doc.heightOfString(docLabelText, { width: docLabelW });
-        const rowH = Math.max(lh, 14) + 6;
+          return cellH;
+        };
 
-        ensureSpace(rowH + 4);
-        const rowTop = doc.y;
+        const curRowY = doc.y;
+        const hA = renderFieldCell(fieldA, leftX, curRowY, fieldB ? halfW : pageWidth);
+        let hB = 0;
+        if (fieldB) {
+          hB = renderFieldCell(fieldB, leftX + halfW + colGap, curRowY, halfW);
+        }
+        const rowH = Math.max(hA, hB);
 
-        doc
-          .font("Helvetica")
-          .fontSize(9.5)
-          .fillColor("#0F172A")
-          .text(docLabelText, leftX, rowTop, { width: docLabelW });
-
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(9.5)
-          .fillColor(isGiven ? "#15803D" : "#64748B")
-          .text(statusText, leftX + docLabelW + 14, rowTop, {
-            width: statusW,
-            align: "right",
-          });
-
-        const divY = rowTop + rowH - 2;
+        const divY = curRowY + rowH + 1.5;
         doc
           .strokeColor("#F1F5F9")
-          .lineWidth(0.75)
+          .lineWidth(0.5)
           .moveTo(leftX, divY)
           .lineTo(leftX + pageWidth, divY)
           .stroke();
 
-        doc.y = rowTop + rowH + 2;
+        doc.y = divY + 2;
       }
 
-      doc.y += 10;
-    };
-
-    renderDocGroup("Common Documents Checklist", submission.commonDocuments);
-    if (submission.additionalDocuments.length > 0) {
-      renderDocGroup(
-        `Additional Documents (${submission.professionLabel})`,
-        submission.additionalDocuments,
-      );
+      doc.y += 2.5;
     }
 
-    // Footer on every page
+    // 4. Documents Checklist Section (Balanced 2-column layout)
+    const uploadedKeys = new Set(submission.documents.map((d) => d.documentKey));
+    const hasCommonDocs = submission.commonDocuments.length > 0;
+    const hasAddDocs = submission.additionalDocuments.length > 0;
+
+    if (hasCommonDocs || hasAddDocs) {
+      const docBarY = doc.y;
+      doc.rect(leftX, docBarY, pageWidth, 14).fill("#F1F5F9");
+      doc.rect(leftX, docBarY, 3, 14).fill("#1E3A8A");
+
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8)
+        .fillColor("#0F172A")
+        .text("Documents Checklist", leftX + 8, docBarY + 3, {
+          width: pageWidth - 16,
+        });
+
+      doc.y = docBarY + 16;
+
+      // Determine document column distribution
+      let colLeftDocs: FormDocument[] = [];
+      let colRightDocs: FormDocument[] = [];
+      let leftHeader = "";
+      let rightHeader = "";
+
+      if (hasCommonDocs && hasAddDocs) {
+        colLeftDocs = submission.commonDocuments;
+        colRightDocs = submission.additionalDocuments;
+        leftHeader = "Common Documents";
+        rightHeader = `Additional Documents (${submission.professionLabel})`;
+      } else {
+        const combined = hasCommonDocs ? submission.commonDocuments : submission.additionalDocuments;
+        const halfCount = Math.ceil(combined.length / 2);
+        colLeftDocs = combined.slice(0, halfCount);
+        colRightDocs = combined.slice(halfCount);
+      }
+
+      const docStartY = doc.y;
+      let leftY = docStartY;
+
+      if (leftHeader) {
+        doc.font("Helvetica-Bold").fontSize(7).fillColor("#1E3A8A").text(leftHeader, leftX, leftY);
+        leftY += 10;
+      }
+
+      for (const d of colLeftDocs) {
+        const isGiven = uploadedKeys.has(d.key);
+        const labelText = sanitizePdfText(d.label);
+        const statusText = isGiven ? "Given" : "Not given";
+
+        doc
+          .font("Helvetica")
+          .fontSize(7)
+          .fillColor("#0F172A")
+          .text(labelText, leftX, leftY, { width: halfW - 46, lineBreak: false });
+
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(7)
+          .fillColor(isGiven ? "#15803D" : "#64748B")
+          .text(statusText, leftX + halfW - 44, leftY, { width: 44, align: "right" });
+
+        const dLineY = leftY + 9.5;
+        doc
+          .strokeColor("#F1F5F9")
+          .lineWidth(0.5)
+          .moveTo(leftX, dLineY)
+          .lineTo(leftX + halfW, dLineY)
+          .stroke();
+
+        leftY += 11.5;
+      }
+
+      let rightY = docStartY;
+      const rightColX = leftX + halfW + colGap;
+
+      if (rightHeader) {
+        doc.font("Helvetica-Bold").fontSize(7).fillColor("#1E3A8A").text(rightHeader, rightColX, rightY);
+        rightY += 10;
+      }
+
+      for (const d of colRightDocs) {
+        const isGiven = uploadedKeys.has(d.key);
+        const labelText = sanitizePdfText(d.label);
+        const statusText = isGiven ? "Given" : "Not given";
+
+        doc
+          .font("Helvetica")
+          .fontSize(7)
+          .fillColor("#0F172A")
+          .text(labelText, rightColX, rightY, { width: halfW - 46, lineBreak: false });
+
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(7)
+          .fillColor(isGiven ? "#15803D" : "#64748B")
+          .text(statusText, rightColX + halfW - 44, rightY, { width: 44, align: "right" });
+
+        const dLineY = rightY + 9.5;
+        doc
+          .strokeColor("#F1F5F9")
+          .lineWidth(0.5)
+          .moveTo(rightColX, dLineY)
+          .lineTo(rightColX + halfW, dLineY)
+          .stroke();
+
+        rightY += 11.5;
+      }
+
+      doc.y = Math.max(leftY, rightY) + 3;
+    }
+
+    // 5. Bottom Footer (Centered at the bottom of the page)
     const range = doc.bufferedPageRange();
     for (let i = 0; i < range.count; i++) {
       doc.switchToPage(range.start + i);
       const prevBottomMargin = doc.page.margins.bottom;
       doc.page.margins.bottom = 0;
 
-      const footerY = doc.page.height - 34;
       doc
         .strokeColor("#CBD5E1")
         .lineWidth(0.5)
-        .moveTo(leftX, footerY - 6)
-        .lineTo(leftX + pageWidth, footerY - 6)
+        .moveTo(leftX, footerY - 5)
+        .lineTo(leftX + pageWidth, footerY - 5)
         .stroke();
 
       doc
         .font("Helvetica")
-        .fontSize(8.5)
+        .fontSize(8)
         .fillColor("#64748B")
         .text(
           "Design and Developed by: IGL Web Ltd | +880-1958-666999",
           leftX,
           footerY,
-          { width: pageWidth - 90, lineBreak: false },
+          {
+            width: pageWidth,
+            align: "center",
+            lineBreak: false,
+          },
         );
-
-      doc
-        .font("Helvetica")
-        .fontSize(8.5)
-        .fillColor("#64748B")
-        .text(`Page ${i + 1} of ${range.count}`, leftX + pageWidth - 85, footerY, {
-          width: 85,
-          align: "right",
-          lineBreak: false,
-        });
 
       doc.page.margins.bottom = prevBottomMargin;
     }
