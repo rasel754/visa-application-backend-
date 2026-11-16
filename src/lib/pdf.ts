@@ -23,6 +23,13 @@ export interface PdfSubmissionInput {
   profileFields: FormField[];
   commonDocuments: FormDocument[];
   additionalDocuments: FormDocument[];
+  company?: {
+    name: string;
+    prefix: string;
+    phone?: string | null;
+    address?: string | null;
+    logoUrl?: string | null;
+  } | null;
 }
 
 export interface PdfBuildOptions {
@@ -139,14 +146,15 @@ export async function buildSubmissionPdfBuffer(
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     // A4 dimensions: 595.28 x 841.89 points
+    const brandName = submission.company?.name || "IGL Visa Help";
     const doc = new PDFDocument({
       size: "A4",
       margins: { top: 20, bottom: 20, left: 28, right: 28 },
       bufferPages: true,
       autoFirstPage: true,
       info: {
-        Title: `IGL Visa Help - ${submission.reference}`,
-        Author: "IGL Visa Help",
+        Title: `${brandName} - ${submission.reference}`,
+        Author: brandName,
       },
     });
 
@@ -169,7 +177,7 @@ export async function buildSubmissionPdfBuffer(
       .font("Helvetica-Bold")
       .fontSize(15)
       .fillColor("#0F172A")
-      .text("IGL Visa Help", leftX, headerTop);
+      .text(sanitizePdfText(brandName), leftX, headerTop);
 
     doc
       .font("Helvetica")
@@ -582,12 +590,24 @@ export async function buildSubmissionPdfBuffer(
         .lineTo(leftX + pageWidth, footerY - 5)
         .stroke();
 
+      const footerText = submission.company
+        ? sanitizePdfText(
+            [
+              submission.company.name,
+              submission.company.phone,
+              submission.company.address,
+            ]
+              .filter(Boolean)
+              .join(" | "),
+          )
+        : "Design and Developed by: IGL Web Ltd | +880-1958-666999";
+
       doc
         .font("Helvetica")
         .fontSize(8)
         .fillColor("#64748B")
         .text(
-          "Design and Developed by: IGL Web Ltd | +880-1958-666999",
+          footerText,
           leftX,
           footerY,
           {

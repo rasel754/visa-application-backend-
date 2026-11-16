@@ -14,6 +14,7 @@ const submissionPayloadSchema = z.object({
   countryCode: z.string().trim().min(1),
   profession: z.string().trim().min(1),
   answers: z.record(z.string(), z.unknown()),
+  companySlug: z.string().trim().optional(),
   intakeToken: z.string().trim().optional(),
   otpToken: z.string().trim().optional(),
 });
@@ -52,6 +53,7 @@ export interface ValidatedSubmissionInput {
   applicantName: string;
   applicantPhone: string;
   applicantEmail: string | null;
+  companySlug?: string;
   intakeToken?: string;
   otpId: string;
   otpPhone: string;
@@ -79,8 +81,14 @@ export function validateSubmissionRequest(
     throw new AppError(400, ERROR_MESSAGES.genericValidation);
   }
 
-  const { countryCode, profession: rawProfession, answers, intakeToken, otpToken: bodyOtpToken } =
-    envelope.data;
+  const {
+    countryCode,
+    profession: rawProfession,
+    answers,
+    companySlug,
+    intakeToken,
+    otpToken: bodyOtpToken,
+  } = envelope.data;
 
   const rawOtpToken = (headerOtpToken?.trim() || bodyOtpToken?.trim() || "").trim();
   if (!rawOtpToken) {
@@ -216,6 +224,7 @@ export function validateSubmissionRequest(
     applicantName,
     applicantPhone,
     applicantEmail,
+    companySlug: companySlug || undefined,
     intakeToken: intakeToken || undefined,
     otpId: otpPayload.otpId,
     otpPhone: otpPayload.phone,

@@ -8,6 +8,8 @@ import { env, parseFrontendOrigins } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { adminOtpRouter } from "./modules/admin-otp/admin-otp.routes";
 import { authRouter } from "./modules/auth/auth.routes";
+import { companyRouter } from "./modules/company/company.routes";
+import { publicCompaniesRouter } from "./modules/companies/public-companies.routes";
 import { formsRouter } from "./modules/forms/forms.routes";
 import { adminLinksRouter, publicLinksRouter } from "./modules/links/links.routes";
 import { otpRouter } from "./modules/otp/otp.routes";
@@ -15,6 +17,7 @@ import {
   adminSubmissionsRouter,
   publicSubmissionsRouter,
 } from "./modules/submissions/submissions.routes";
+import { superAdminRouter } from "./modules/super-admin/super-admin.routes";
 
 export function createApp(): express.Express {
   const app = express();
@@ -63,11 +66,24 @@ export function createApp(): express.Express {
     res.json({ ok: true });
   });
 
+  // Public APIs
   app.use("/api/forms", formsRouter);
   app.use("/api/otp", otpRouter);
   app.use("/api/links", publicLinksRouter);
   app.use("/api/submissions", publicSubmissionsRouter);
+  app.use("/api/applications", publicSubmissionsRouter);
+  app.use("/api/public/companies", publicCompaniesRouter);
+  app.use("/api/companies/public", publicCompaniesRouter);
+
+  // Auth
   app.use("/api/auth", authRouter);
+
+  // Multi-Tenant RBAC Platforms
+  app.use("/api/super-admin", superAdminRouter);
+  app.use("/api/super-admin", adminOtpRouter);
+  app.use("/api/company", companyRouter);
+
+  // Backwards-compatible Admin routes (now tenant-isolated)
   app.use("/api/admin/links", adminLinksRouter);
   app.use("/api/admin", adminOtpRouter);
   app.use("/api/admin", adminSubmissionsRouter);
@@ -77,4 +93,3 @@ export function createApp(): express.Express {
 
   return app;
 }
-

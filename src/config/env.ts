@@ -61,6 +61,9 @@ const envSchema = z.object({
   ADMIN_EMAIL: z.string().email("ADMIN_EMAIL must be a valid email"),
   ADMIN_PASSWORD: z.string().min(8, "ADMIN_PASSWORD must be at least 8 characters"),
   ADMIN_NAME: z.string().min(1, "ADMIN_NAME is required"),
+  SUPER_ADMIN_EMAIL: z.string().email().optional().default("superadmin@iglvisahelp.com"),
+  SUPER_ADMIN_PASSWORD: z.string().min(8).optional().default("SuperAdminStrongPass2026!"),
+  SUPER_ADMIN_NAME: z.string().min(1).optional().default("IGL Platform Super Admin"),
 });
 
 export function parseFrontendOrigins(raw: string): string[] {

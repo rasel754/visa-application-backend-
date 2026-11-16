@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import { Prisma, SubmissionStatus } from "@prisma/client";
 import { z } from "zod";
 import {
+  FormField,
   formatProfessionLabel,
   fromPrismaProfession,
   groupFieldsBySection,
@@ -20,8 +21,8 @@ import {
   getStoredFilePath,
   safeDeleteTempFiles,
 } from "../../lib/storage";
-import { streamSubmissionArchiveZip } from "../../lib/zip";
-import { requireAdmin } from "../../middleware/auth";
+import { authMiddleware } from "../../middlewares/authMiddleware";
+import { tenantIsolation } from "../../middlewares/tenantIsolation";
 import { uploadSubmissionDocuments } from "../../middleware/upload";
 import { validateBody } from "../../middleware/validate";
 import {
@@ -95,21 +96,24 @@ publicSubmissionsRouter.get(
   },
 );
 
-adminSubmissionsRouter.use(requireAdmin);
+// Admin / Tenant-isolated routes
+adminSubmissionsRouter.use(authMiddleware, tenantIsolation);
 
 adminSubmissionsRouter.get(
   "/stats",
-  async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const todayStart = getDhakaTodayStartUtc();
+      const tenantWhere = (req.tenantWhere ?? {}) as Prisma.SubmissionWhereInput;
 
       const [total, today, grouped] = await Promise.all([
-        prisma.submission.count(),
+        prisma.submission.count({ where: tenantWhere }),
         prisma.submission.count({
-          where: { createdAt: { gte: todayStart } },
+          where: { ...tenantWhere, createdAt: { gte: todayStart } },
         }),
         prisma.submission.groupBy({
           by: ["status"],
+          where: tenantWhere,
           _count: { status: true },
         }),
       ]);
@@ -137,6 +141,7 @@ adminSubmissionsRouter.get(
   "/submissions",
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+      const tenantWhere = (req.tenantWhere ?? {}) as Prisma.SubmissionWhereInput;
       const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
       const country = typeof req.query.country === "string" ? req.query.country.trim() : "";
       const rawProfession =
@@ -153,7 +158,9 @@ adminSubmissionsRouter.get(
           ? Math.min(parsedLimit, 100)
           : 20;
 
-      const where: Prisma.SubmissionWhereInput = {};
+      const where: Prisma.SubmissionWhereInput = {
+        ...tenantWhere,
+      };
 
       if (search) {
         where.OR = [
@@ -186,6 +193,7 @@ adminSubmissionsRouter.get(
       const toDate = to ? parseDateBoundary(to, true) : null;
       if (fromDate || toDate) {
         where.createdAt = {
+          ...(where.createdAt && typeof where.createdAt === "object" ? where.createdAt : {}),
           ...(fromDate ? { gte: fromDate } : {}),
           ...(toDate ? { lte: toDate } : {}),
         };
@@ -201,6 +209,15 @@ adminSubmissionsRouter.get(
           select: {
             id: true,
             reference: true,
+            companyId: true,
+            company: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                prefix: true,
+              },
+            },
             countryCode: true,
             countryName: true,
             visaType: true,
@@ -239,9 +256,22 @@ adminSubmissionsRouter.get(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const id = String(req.params.id ?? "").trim();
-      const submission = await prisma.submission.findUnique({
-        where: { id },
+      const tenantWhere = (req.tenantWhere ?? {}) as Prisma.SubmissionWhereInput;
+
+      const submission = await prisma.submission.findFirst({
+        where: { id, ...tenantWhere },
         include: {
+          company: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              prefix: true,
+              phone: true,
+              address: true,
+              logoUrl: true,
+            },
+          },
           documents: {
             orderBy: { createdAt: "asc" },
           },
@@ -255,13 +285,49 @@ adminSubmissionsRouter.get(
 
       const professionKey = fromPrismaProfession(submission.profession);
       const form = resolveVisitFormForProfession(submission.countryCode, professionKey);
+
+      const answersMap =
+        typeof submission.answers === "object" &&
+        submission.answers !== null &&
+        !Array.isArray(submission.answers)
+          ? (submission.answers as Record<string, unknown>)
+          : {};
+
+      const knownKeys = new Set(form?.allFields.map((f) => f.key) ?? []);
+      const unmappedFields: FormField[] = [];
+
+      for (const [key, val] of Object.entries(answersMap)) {
+        if (knownKeys.has(key)) continue;
+        if (val === undefined || val === null || val === "") continue;
+        if (Array.isArray(val) && val.length === 0) continue;
+
+        const label = key
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+        const isTable = Array.isArray(val);
+        const isNum = typeof val === "number";
+
+        unmappedFields.push({
+          key,
+          label,
+          type: isTable ? "table" : isNum ? "number" : "text",
+          required: false,
+          section: "Additional Information",
+        });
+      }
+
+      const allCombinedFields = [...(form?.allFields ?? []), ...unmappedFields];
+      const orderedSections = groupFieldsBySection(allCombinedFields);
       const commonSections = form ? groupFieldsBySection(form.commonFields) : [];
-      const professionSections = form ? groupFieldsBySection(form.profileFields) : [];
-      const orderedSections = form ? groupFieldsBySection(form.allFields) : [];
+      const professionSections = form
+        ? groupFieldsBySection([...form.profileFields, ...unmappedFields])
+        : [];
 
       res.json({
         id: submission.id,
         reference: submission.reference,
+        companyId: submission.companyId,
+        company: submission.company,
         countryCode: submission.countryCode,
         countryName: submission.countryName,
         visaType: submission.visaType,
@@ -306,10 +372,11 @@ adminSubmissionsRouter.patch(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const id = String(req.params.id ?? "").trim();
+      const tenantWhere = (req.tenantWhere ?? {}) as Prisma.SubmissionWhereInput;
       const { status } = req.body as z.infer<typeof updateStatusSchema>;
 
-      const existing = await prisma.submission.findUnique({
-        where: { id },
+      const existing = await prisma.submission.findFirst({
+        where: { id, ...tenantWhere },
         select: { id: true },
       });
       if (!existing) {
@@ -318,7 +385,7 @@ adminSubmissionsRouter.patch(
       }
 
       const updated = await prisma.submission.update({
-        where: { id },
+        where: { id: existing.id },
         data: { status },
         select: { id: true, status: true, updatedAt: true },
       });
@@ -335,8 +402,10 @@ adminSubmissionsRouter.delete(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const id = String(req.params.id ?? "").trim();
-      const existing = await prisma.submission.findUnique({
-        where: { id },
+      const tenantWhere = (req.tenantWhere ?? {}) as Prisma.SubmissionWhereInput;
+
+      const existing = await prisma.submission.findFirst({
+        where: { id, ...tenantWhere },
         select: { id: true, reference: true },
       });
 
@@ -360,7 +429,8 @@ adminSubmissionsRouter.get(
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const id = String(req.params.id ?? "").trim();
-      const { reference, pdfBuffer } = await generateAdminSubmissionPdf(id);
+      const tenantWhere = (req.tenantWhere ?? {}) as Record<string, unknown>;
+      const { reference, pdfBuffer } = await generateAdminSubmissionPdf(id, tenantWhere);
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename="${reference}.pdf"`);
@@ -379,9 +449,14 @@ adminSubmissionsRouter.get(
       const id = String(req.params.id ?? "").trim();
       const docId = String(req.params.docId ?? "").trim();
       const inline = req.query.inline === "1";
+      const tenantWhere = (req.tenantWhere ?? {}) as Prisma.SubmissionWhereInput;
 
       const doc = await prisma.submissionDocument.findFirst({
-        where: { id: docId, submissionId: id },
+        where: {
+          id: docId,
+          submissionId: id,
+          submission: tenantWhere,
+        },
         include: {
           submission: { select: { reference: true } },
         },
@@ -414,15 +489,4 @@ adminSubmissionsRouter.get(
   },
 );
 
-adminSubmissionsRouter.get(
-  "/submissions/:id/archive.zip",
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const id = String(req.params.id ?? "").trim();
-      const { reference, pdfBuffer, documents } = await generateAdminSubmissionPdf(id);
-      await streamSubmissionArchiveZip(res, reference, pdfBuffer, documents);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+

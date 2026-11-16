@@ -1,5 +1,6 @@
-import { OtpStatus, Prisma } from "@prisma/client";
+import { Company, OtpStatus, Prisma } from "@prisma/client";
 import {
+  FormField,
   formatProfessionLabel,
   fromPrismaProfession,
   resolveVisitFormForProfession,
@@ -13,20 +14,8 @@ import {
   moveFilesToSubmissionFolder,
 } from "../../lib/storage";
 import { generateSecureToken, hashToken } from "../../lib/tokens";
+import { generateNextReference } from "../../utils/referenceGenerator";
 import { ValidatedSubmissionInput } from "./submission.validation";
-
-function parseNextSequence(references: string[], prefix: string): number {
-  let maxSeq = 0;
-  for (const ref of references) {
-    if (!ref.startsWith(prefix)) continue;
-    const suffix = ref.slice(prefix.length);
-    const num = Number.parseInt(suffix, 10);
-    if (Number.isFinite(num) && num > maxSeq) {
-      maxSeq = num;
-    }
-  }
-  return maxSeq + 1;
-}
 
 function isRetryableTxError(err: unknown): boolean {
   return (
@@ -37,7 +26,11 @@ function isRetryableTxError(err: unknown): boolean {
 
 export async function createSubmission(
   input: ValidatedSubmissionInput,
-): Promise<{ reference: string; downloadToken: string }> {
+): Promise<{
+  reference: string;
+  downloadToken: string;
+  company: { name: string; slug: string; prefix: string };
+}> {
   const otpRecord = await prisma.otpVerification.findUnique({
     where: { id: input.otpId },
   });
@@ -53,11 +46,13 @@ export async function createSubmission(
   }
 
   let intakeLinkId: string | null = null;
+  let resolvedCompany: Company | null = null;
   const prismaProfession = toPrismaProfession(input.profession);
 
   if (input.intakeToken) {
     const link = await prisma.intakeLink.findUnique({
       where: { token: input.intakeToken },
+      include: { company: true },
     });
 
     if (
@@ -66,6 +61,13 @@ export async function createSubmission(
       (link.expiresAt && link.expiresAt.getTime() < Date.now())
     ) {
       throw new AppError(404, ERROR_MESSAGES.formNotFound);
+    }
+
+    if (!link.company.isActive) {
+      throw new AppError(
+        403,
+        "The visa agency associated with this application link is currently inactive or suspended.",
+      );
     }
 
     if (
@@ -80,12 +82,40 @@ export async function createSubmission(
     }
 
     intakeLinkId = link.id;
+    resolvedCompany = link.company;
+  } else if (input.companySlug) {
+    const company = await prisma.company.findUnique({
+      where: { slug: input.companySlug.trim().toLowerCase() },
+    });
+
+    if (!company) {
+      throw new AppError(404, "Visa agency not found.");
+    }
+
+    if (!company.isActive) {
+      throw new AppError(
+        403,
+        "This visa agency is currently inactive or suspended.",
+      );
+    }
+
+    resolvedCompany = company;
+  } else {
+    // Default fallback to IGL Visa Help
+    const company = await prisma.company.findUnique({
+      where: { slug: "igl-visa-help" },
+    });
+
+    if (!company || !company.isActive) {
+      throw new AppError(404, "Default visa agency not found or inactive.");
+    }
+
+    resolvedCompany = company;
   }
 
   const downloadToken = generateSecureToken(24);
   const downloadTokenHash = hashToken(downloadToken);
   const year = new Date().getFullYear();
-  const prefix = `IGL-${year}-`;
 
   for (let attempt = 0; attempt < 5; attempt++) {
     let createdReference: string | null = null;
@@ -120,15 +150,12 @@ export async function createSubmission(
             }
           }
 
-          const existingRefs = await tx.submission.findMany({
-            where: { reference: { startsWith: prefix } },
-            select: { reference: true },
-          });
-          const nextSeq = parseNextSequence(
-            existingRefs.map((r) => r.reference),
-            prefix,
+          // Generate sequential reference atomically for this company prefix
+          const reference = await generateNextReference(
+            tx,
+            resolvedCompany!.prefix,
+            year,
           );
-          const reference = `${prefix}${String(nextSeq).padStart(4, "0")}`;
           createdReference = reference;
 
           const movedDocs = moveFilesToSubmissionFolder(reference, input.filesToMove);
@@ -136,6 +163,7 @@ export async function createSubmission(
           await tx.submission.create({
             data: {
               reference,
+              companyId: resolvedCompany!.id,
               countryCode: input.form.country_code,
               countryName: input.form.country,
               visaType: "visit",
@@ -165,7 +193,15 @@ export async function createSubmission(
             },
           });
 
-          return { reference, downloadToken };
+          return {
+            reference,
+            downloadToken,
+            company: {
+              name: resolvedCompany!.name,
+              slug: resolvedCompany!.slug,
+              prefix: resolvedCompany!.prefix,
+            },
+          };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -193,7 +229,10 @@ export async function generateSubmissionPdfByDownloadToken(
   const tokenHash = hashToken(downloadToken);
   const submission = await prisma.submission.findUnique({
     where: { downloadTokenHash: tokenHash },
-    include: { documents: true },
+    include: {
+      documents: true,
+      company: true,
+    },
   });
 
   if (!submission) {
@@ -208,6 +247,23 @@ export async function generateSubmissionPdfByDownloadToken(
     !Array.isArray(submission.answers)
       ? (submission.answers as Record<string, unknown>)
       : {};
+
+  const knownKeys = new Set(form?.allFields.map((f) => f.key) ?? []);
+  const unmappedFields: FormField[] = [];
+
+  for (const [key, val] of Object.entries(answersObj)) {
+    if (knownKeys.has(key)) continue;
+    if (val === undefined || val === null || val === "") continue;
+    if (Array.isArray(val) && val.length === 0) continue;
+
+    unmappedFields.push({
+      key,
+      label: key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      type: Array.isArray(val) ? "table" : typeof val === "number" ? "number" : "text",
+      required: false,
+      section: "Additional Information",
+    });
+  }
 
   const pdfBuffer = await buildSubmissionPdfBuffer(
     {
@@ -224,9 +280,10 @@ export async function generateSubmissionPdfByDownloadToken(
         originalName: d.originalName,
       })),
       commonFields: form?.commonFields ?? [],
-      profileFields: form?.profileFields ?? [],
+      profileFields: [...(form?.profileFields ?? []), ...unmappedFields],
       commonDocuments: form?.commonDocuments ?? [],
       additionalDocuments: form?.additionalDocuments ?? [],
+      company: submission.company,
     },
     { includeEmptyOptional: false },
   );
@@ -236,14 +293,21 @@ export async function generateSubmissionPdfByDownloadToken(
 
 export async function generateAdminSubmissionPdf(
   submissionId: string,
+  tenantWhere: Record<string, unknown> = {},
 ): Promise<{
   reference: string;
   pdfBuffer: Buffer;
   documents: Array<{ label: string; originalName: string; storedName: string }>;
 }> {
-  const submission = await prisma.submission.findUnique({
-    where: { id: submissionId },
-    include: { documents: true },
+  const submission = await prisma.submission.findFirst({
+    where: {
+      id: submissionId,
+      ...tenantWhere,
+    },
+    include: {
+      documents: true,
+      company: true,
+    },
   });
 
   if (!submission) {
@@ -277,6 +341,7 @@ export async function generateAdminSubmissionPdf(
       profileFields: form?.profileFields ?? [],
       commonDocuments: form?.commonDocuments ?? [],
       additionalDocuments: form?.additionalDocuments ?? [],
+      company: submission.company,
     },
     { includeEmptyOptional: true },
   );

@@ -1,46 +1,113 @@
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Role } from "@prisma/client";
 
-export interface InitialAdminConfig {
-  email: string;
-  password: string;
-  name: string;
+export interface SeedConfig {
+  superAdminEmail: string;
+  superAdminPassword: string;
+  superAdminName: string;
+  companyAdminEmail: string;
+  companyAdminPassword: string;
+  companyAdminName: string;
 }
 
-export async function ensureInitialAdmin(
+export async function ensureInitialPlatformSeed(
   prismaClient: PrismaClient,
-  config: InitialAdminConfig,
-): Promise<{ seeded: boolean; updated: boolean; email: string; name: string }> {
-  const normalizedEmail = config.email.toLowerCase().trim();
-  const normalizedName = config.name.trim();
-  const passwordHash = await bcrypt.hash(config.password, 12);
-
-  const existing = await prismaClient.adminUser.findUnique({
-    where: { email: normalizedEmail },
-    select: { id: true },
-  });
-
-  const admin = await prismaClient.adminUser.upsert({
-    where: { email: normalizedEmail },
+  config: SeedConfig,
+): Promise<{
+  superAdmin: { email: string; name: string };
+  defaultCompany: { id: string; name: string; slug: string; prefix: string };
+  companyAdmin: { email: string; name: string };
+}> {
+  // 1. Ensure default Company "IGL Visa Help"
+  const defaultCompany = await prismaClient.company.upsert({
+    where: { slug: "igl-visa-help" },
     create: {
-      email: normalizedEmail,
-      passwordHash,
-      name: normalizedName,
+      name: "IGL Visa Help",
+      slug: "igl-visa-help",
+      prefix: "IGL",
+      logoUrl: "/logo.png",
+      phone: "+880-1958-666999",
+      address: "Dhaka, Bangladesh",
+      isActive: true,
     },
     update: {
-      passwordHash,
-      name: normalizedName,
+      name: "IGL Visa Help",
+      prefix: "IGL",
+      isActive: true,
     },
-    select: {
-      email: true,
-      name: true,
+  });
+
+  // 2. Ensure Super Admin
+  const superEmail = config.superAdminEmail.toLowerCase().trim();
+  const superPasswordHash = await bcrypt.hash(config.superAdminPassword, 12);
+  const superAdmin = await prismaClient.adminUser.upsert({
+    where: { email: superEmail },
+    create: {
+      email: superEmail,
+      passwordHash: superPasswordHash,
+      name: config.superAdminName.trim(),
+      role: Role.SUPER_ADMIN,
+      companyId: null,
     },
+    update: {
+      passwordHash: superPasswordHash,
+      name: config.superAdminName.trim(),
+      role: Role.SUPER_ADMIN,
+      companyId: null,
+    },
+    select: { email: true, name: true },
+  });
+
+  // 3. Ensure Company Admin for IGL
+  const compAdminEmail = config.companyAdminEmail.toLowerCase().trim();
+  const compPasswordHash = await bcrypt.hash(config.companyAdminPassword, 12);
+  const companyAdmin = await prismaClient.adminUser.upsert({
+    where: { email: compAdminEmail },
+    create: {
+      email: compAdminEmail,
+      passwordHash: compPasswordHash,
+      name: config.companyAdminName.trim(),
+      role: Role.COMPANY,
+      companyId: defaultCompany.id,
+    },
+    update: {
+      passwordHash: compPasswordHash,
+      name: config.companyAdminName.trim(),
+      role: Role.COMPANY,
+      companyId: defaultCompany.id,
+    },
+    select: { email: true, name: true },
   });
 
   return {
-    seeded: !existing,
-    updated: Boolean(existing),
-    email: admin.email,
-    name: admin.name,
+    superAdmin,
+    defaultCompany: {
+      id: defaultCompany.id,
+      name: defaultCompany.name,
+      slug: defaultCompany.slug,
+      prefix: defaultCompany.prefix,
+    },
+    companyAdmin,
+  };
+}
+
+// Backwards compatibility helper
+export async function ensureInitialAdmin(
+  prismaClient: PrismaClient,
+  config: { email: string; password: string; name: string },
+) {
+  const result = await ensureInitialPlatformSeed(prismaClient, {
+    superAdminEmail: "superadmin@iglvisahelp.com",
+    superAdminPassword: "SuperAdminStrongPass2026!",
+    superAdminName: "IGL Platform Super Admin",
+    companyAdminEmail: config.email,
+    companyAdminPassword: config.password,
+    companyAdminName: config.name,
+  });
+  return {
+    seeded: true,
+    updated: false,
+    email: result.companyAdmin.email,
+    name: result.companyAdmin.name,
   };
 }

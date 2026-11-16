@@ -7,6 +7,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  SUPER_ADMIN
+  COMPANY
+}
+
 enum SubmissionStatus {
   NEW
   CHECKED
@@ -29,18 +34,46 @@ enum OtpStatus {
   USED
 }
 
+model Company {
+  id           String        @id @default(cuid())
+  name         String        @db.VarChar(191)
+  slug         String        @unique @db.VarChar(64)
+  prefix       String        @unique @db.VarChar(16)
+  logoUrl      String?       @db.VarChar(512)
+  phone        String?       @db.VarChar(64)
+  address      String?       @db.VarChar(255)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  users        AdminUser[]
+  applications Submission[]
+  inviteLinks  IntakeLink[]
+
+  @@index([slug])
+  @@index([prefix])
+  @@index([isActive])
+}
+
 model AdminUser {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id           String    @id @default(cuid())
+  email        String    @unique @db.VarChar(191)
+  passwordHash String    @db.VarChar(191)
+  name         String    @db.VarChar(191)
+  role         Role      @default(COMPANY)
+  companyId    String?
+  company      Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([companyId])
+  @@index([role])
 }
 
 model IntakeLink {
   id          String       @id @default(cuid())
   token       String       @unique @db.VarChar(64)
+  companyId   String
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   countryCode String?      @db.VarChar(16)
   profession  Profession?
   expiresAt   DateTime?
@@ -48,12 +81,15 @@ model IntakeLink {
   createdAt   DateTime     @default(now())
   submissions Submission[]
 
+  @@index([companyId])
   @@index([createdAt])
 }
 
 model Submission {
   id                String               @id @default(cuid())
   reference         String               @unique @db.VarChar(32)
+  companyId         String
+  company           Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
   countryCode       String               @db.VarChar(16)
   countryName       String               @db.VarChar(128)
   visaType          String               @default("visit") @db.VarChar(32)
@@ -75,6 +111,7 @@ model Submission {
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
+  @@index([companyId])
   @@index([status])
   @@index([countryCode])
   @@index([profession])
@@ -127,4 +164,3 @@ model BlockedPhone {
 
   @@index([createdAt])
 }
-

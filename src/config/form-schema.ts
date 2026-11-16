@@ -375,10 +375,23 @@ export const PROFESSION_FORM_PROFILES: Record<ProfessionKey, ApplicantProfileDat
 
 export const SECTION_DISPLAY_ORDER = [
   "General Information",
+  "Personal Information",
+  "Contact",
+  "Passport",
+  "Travel Plan",
+  "Travel Information",
+  "Host / Invitation",
+  "Family Information",
+  "Educational Information",
+  "Education (Student)",
   "Work Information",
   "Work/Study Information",
-  "Educational Information",
-  "Family Information",
-  "Travel Information",
+  "Business (Businessman)",
+  "Employment (Employee)",
+  "Financial",
+  "Sponsor (Student)",
+  "Travel History",
+  "Additional Information",
+  "Additional Application Data",
 ] as const;
 

@@ -325,9 +325,12 @@ export function getVisitForm(countryCode: string): VisitFormPayload | null {
     official_form: visit.official_form,
     source_url: visit.source_url ?? "",
     last_verified_at: visit.last_verified_at ?? "",
-    common_information_fields: COMMON_FORM_FIELDS,
-    common_required_documents: [],
-    applicant_profiles: PROFESSION_FORM_PROFILES,
+    common_information_fields:
+      visit.common_information_fields && visit.common_information_fields.length > 0
+        ? visit.common_information_fields
+        : COMMON_FORM_FIELDS,
+    common_required_documents: visit.common_required_documents ?? [],
+    applicant_profiles: visit.applicant_profiles ?? PROFESSION_FORM_PROFILES,
   };
 }
 
@@ -341,10 +344,28 @@ export function resolveVisitFormForProfession(
   }
 
   const visit = country.visa_types.visit;
-  const profile = professionKey ? PROFESSION_FORM_PROFILES[professionKey] : null;
+  const profile =
+    professionKey && visit.applicant_profiles && visit.applicant_profiles[professionKey]
+      ? visit.applicant_profiles[professionKey]
+      : professionKey
+        ? PROFESSION_FORM_PROFILES[professionKey]
+        : null;
 
-  const commonFields = COMMON_FORM_FIELDS;
+  const commonFields =
+    visit.common_information_fields && visit.common_information_fields.length > 0
+      ? visit.common_information_fields
+      : COMMON_FORM_FIELDS;
   const profileFields = profile ? profile.profile_information_fields : [];
+
+  const commonDocuments: GroupedFormDocument[] = (visit.common_required_documents ?? []).map((doc) => ({
+    ...doc,
+    group: "common" as const,
+  }));
+  const additionalDocuments: GroupedFormDocument[] = (profile?.additional_documents ?? []).map((doc) => ({
+    ...doc,
+    group: (professionKey ?? "common") as "common" | ProfessionKey,
+  }));
+  const allDocuments: GroupedFormDocument[] = [...commonDocuments, ...additionalDocuments];
 
   return {
     country: country.country,
@@ -358,9 +379,9 @@ export function resolveVisitFormForProfession(
     commonFields,
     profileFields,
     allFields: [...commonFields, ...profileFields],
-    commonDocuments: [],
-    additionalDocuments: [],
-    allDocuments: [],
+    commonDocuments,
+    additionalDocuments,
+    allDocuments,
   };
 }
 

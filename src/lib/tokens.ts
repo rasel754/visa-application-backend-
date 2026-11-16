@@ -6,6 +6,8 @@ export interface AdminJwtPayload {
   sub: string;
   email: string;
   name: string;
+  role: "SUPER_ADMIN" | "COMPANY";
+  companyId: string | null;
 }
 
 export interface OtpJwtPayload {
@@ -43,10 +45,18 @@ export function verifyAdminToken(token: string): AdminJwtPayload {
     throw new Error("Invalid token payload");
   }
 
+  const roleRaw = (decoded as Record<string, unknown>).role;
+  const role: "SUPER_ADMIN" | "COMPANY" =
+    roleRaw === "SUPER_ADMIN" ? "SUPER_ADMIN" : "COMPANY";
+  const companyIdRaw = (decoded as Record<string, unknown>).companyId;
+  const companyId = typeof companyIdRaw === "string" ? companyIdRaw : null;
+
   return {
     sub: decoded.sub,
     email: (decoded as Record<string, unknown>).email as string,
     name: (decoded as Record<string, unknown>).name as string,
+    role,
+    companyId,
   };
 }
 
