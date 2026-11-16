@@ -325,12 +325,22 @@ export function getVisitForm(countryCode: string): VisitFormPayload | null {
     official_form: visit.official_form,
     source_url: visit.source_url ?? "",
     last_verified_at: visit.last_verified_at ?? "",
-    common_information_fields:
-      visit.common_information_fields && visit.common_information_fields.length > 0
-        ? visit.common_information_fields
-        : COMMON_FORM_FIELDS,
+    common_information_fields: COMMON_FORM_FIELDS,
     common_required_documents: visit.common_required_documents ?? [],
-    applicant_profiles: visit.applicant_profiles ?? PROFESSION_FORM_PROFILES,
+    applicant_profiles: {
+      student: {
+        ...PROFESSION_FORM_PROFILES.student,
+        additional_documents: visit.applicant_profiles?.student?.additional_documents ?? [],
+      },
+      businessman: {
+        ...PROFESSION_FORM_PROFILES.businessman,
+        additional_documents: visit.applicant_profiles?.businessman?.additional_documents ?? [],
+      },
+      employee: {
+        ...PROFESSION_FORM_PROFILES.employee,
+        additional_documents: visit.applicant_profiles?.employee?.additional_documents ?? [],
+      },
+    },
   };
 }
 
@@ -344,24 +354,20 @@ export function resolveVisitFormForProfession(
   }
 
   const visit = country.visa_types.visit;
-  const profile =
+  const profile = professionKey ? PROFESSION_FORM_PROFILES[professionKey] : null;
+  const rawCountryProfile =
     professionKey && visit.applicant_profiles && visit.applicant_profiles[professionKey]
       ? visit.applicant_profiles[professionKey]
-      : professionKey
-        ? PROFESSION_FORM_PROFILES[professionKey]
-        : null;
+      : null;
 
-  const commonFields =
-    visit.common_information_fields && visit.common_information_fields.length > 0
-      ? visit.common_information_fields
-      : COMMON_FORM_FIELDS;
+  const commonFields = COMMON_FORM_FIELDS;
   const profileFields = profile ? profile.profile_information_fields : [];
 
   const commonDocuments: GroupedFormDocument[] = (visit.common_required_documents ?? []).map((doc) => ({
     ...doc,
     group: "common" as const,
   }));
-  const additionalDocuments: GroupedFormDocument[] = (profile?.additional_documents ?? []).map((doc) => ({
+  const additionalDocuments: GroupedFormDocument[] = (rawCountryProfile?.additional_documents ?? []).map((doc) => ({
     ...doc,
     group: (professionKey ?? "common") as "common" | ProfessionKey,
   }));

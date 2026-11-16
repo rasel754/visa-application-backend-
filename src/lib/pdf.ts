@@ -281,10 +281,14 @@ export async function buildSubmissionPdfBuffer(
     const orderedAllFields = [...submission.commonFields, ...submission.profileFields];
     const rawGroups = groupFieldsBySection(orderedAllFields);
 
+    const isStudent =
+      submission.professionLabel.toLowerCase().includes("student");
+
     const hasNoEducationAnswer =
-      submission.answers["has_no_education"] === true ||
-      submission.answers["has_no_education"] === "yes" ||
-      submission.answers["has_no_education"] === "true";
+      !isStudent &&
+      (submission.answers["has_no_education"] === true ||
+        submission.answers["has_no_education"] === "yes" ||
+        submission.answers["has_no_education"] === "true");
 
     const renderableGroups: SectionGroup[] = [];
     for (const group of rawGroups) {

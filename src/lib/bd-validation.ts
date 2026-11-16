@@ -432,25 +432,37 @@ export function validateFieldWithRules(
   const requiredLabel = getRequiredFieldLabel(field);
 
   // If applicant has no formal education, last_education fields are not required and pass cleanly
+  // Note: If applicant is a student, they cannot declare "no formal education"
   if (
     field.key === "last_education_degree" ||
     field.key === "last_education_institution" ||
     field.key === "has_no_education"
   ) {
+    const isStudent =
+      String(allAnswers["profession"] ?? "").toLowerCase() === "student";
+
     const hasNoEdu =
-      allAnswers["has_no_education"] === true ||
-      allAnswers["has_no_education"] === "yes" ||
-      allAnswers["has_no_education"] === "true" ||
-      allAnswers["no_education"] === true ||
-      allAnswers["no_education"] === "yes";
+      !isStudent &&
+      (allAnswers["has_no_education"] === true ||
+        allAnswers["has_no_education"] === "yes" ||
+        allAnswers["has_no_education"] === "true" ||
+        allAnswers["no_education"] === true ||
+        allAnswers["no_education"] === "yes");
+
+    if (field.key === "has_no_education") {
+      if (
+        isStudent &&
+        (rawValue === "yes" || rawValue === true || rawValue === "true")
+      ) {
+        return {
+          error: "Students cannot select 'No Formal Education'.",
+          normalized: "",
+        };
+      }
+      return { error: null, normalized: hasNoEdu ? "yes" : "" };
+    }
 
     if (hasNoEdu) {
-      if (field.key === "has_no_education") {
-        return { error: null, normalized: "yes" };
-      }
-      return { error: null, normalized: "" };
-    }
-    if (field.key === "has_no_education") {
       return { error: null, normalized: "" };
     }
   }

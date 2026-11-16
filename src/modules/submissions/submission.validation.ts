@@ -109,6 +109,7 @@ export function validateSubmissionRequest(
 
   const fieldErrors: FieldErrors = {};
   const sanitizedAnswers: Record<string, unknown> = {};
+  const answersWithContext = { ...answers, profession };
 
   for (const field of form.allFields) {
     const rawVal = answers[field.key];
@@ -122,7 +123,7 @@ export function validateSubmissionRequest(
       continue;
     }
 
-    const result = validateFieldWithRules(field, rawVal, answers);
+    const result = validateFieldWithRules(field, rawVal, answersWithContext);
     if (result.error) {
       fieldErrors[field.key] = result.error;
     }
@@ -168,11 +169,8 @@ export function validateSubmissionRequest(
     });
   }
 
-  for (const doc of form.allDocuments) {
-    if (doc.required && !filesByDocKey.has(doc.key) && !fieldErrors[doc.key]) {
-      fieldErrors[doc.key] = ERROR_MESSAGES.requiredFile(doc.label);
-    }
-  }
+  // Document upload is optional during initial online intake
+  // Any files uploaded are still validated and saved if provided
 
   if (Object.keys(fieldErrors).length > 0) {
     throw new AppError(400, ERROR_MESSAGES.genericValidation, fieldErrors);
